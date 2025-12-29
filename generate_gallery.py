@@ -50,6 +50,7 @@ ASTRO_CACHE_INDEX = ASTRO_CACHE_DIR / "index.json"
 BASE_URL = "https://example.com/seestar"
 SITE_TITLE = "Galerie Seestar S50"
 CREATOR_NAME = "Steve Prud’Homme"
+IMAGE_LICENSE = "Creative Commons CC0 1.0"
 
 LOCAL_OBJECT_DB = {
     "M 51": ("galaxie spirale", "spiral galaxy",
@@ -359,16 +360,20 @@ def normalize_catalog_id(name: str) -> str | None:
         return s
 
     m = re.search(r"\bM\s*([0-9]{1,3})\b", s)
-    if m: return f"M {int(m.group(1))}"
+    if m:
+        return f"M {int(m.group(1))}"
 
     m = re.search(r"\bNGC\s*([0-9]{1,5})\b", s)
-    if m: return f"NGC {int(m.group(1))}"
+    if m:
+        return f"NGC {int(m.group(1))}"
 
     m = re.search(r"\bIC\s*([0-9]{1,5})\b", s)
-    if m: return f"IC {int(m.group(1))}"
+    if m:
+        return f"IC {int(m.group(1))}"
 
     m = re.search(r"\bSH2[-\s]*([0-9]{1,4})\b", s)
-    if m: return f"Sh2-{int(m.group(1))}"
+    if m:
+        return f"Sh2-{int(m.group(1))}"
 
     return None
 
@@ -804,7 +809,8 @@ def og_meta(title: str, description: str, image_url_abs: str, url_abs: str) -> s
 def image_jsonld(item: dict, page_url: str) -> dict:
     add_props = []
     for k in ["ra", "dec", "exptime", "filter", "telescope", "instrument",
-              "messier", "ngc", "constellation", "magnitude", "size", "distance_ly"]:
+              "messier", "ngc", "constellation", "magnitude", "size", "distance_ly",
+              "simbad_main_id", "simbad_otype", "simbad_otype_txt"]:
         v = item.get(k)
         if v not in (None, "", 0, "0"):
             add_props.append({"@type": "PropertyValue", "name": k.upper(), "value": str(v)})
@@ -825,6 +831,7 @@ def image_jsonld(item: dict, page_url: str) -> dict:
         "about": {"@type": "Thing", "name": item.get("objectName", "")},
         "isPartOf": {"@type": "CollectionPage", "name": SITE_TITLE, "url": BASE_URL.rstrip("/") + "/index.html"},
         "creator": {"@type": "Person", "name": CREATOR_NAME},
+        "license": IMAGE_LICENSE,
         "url": page_url,
         "additionalProperty": add_props
     }
@@ -887,60 +894,118 @@ def build_index_html(title: str, og_block: str) -> str:
 
 
 def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og_block: str, items: list) -> str:
-    astro = items[0].get("astrometryUrl", "")
+    # Héro = plus récent (items[0] est trié ailleurs)
+    hero = items[0]
+
+    author = CREATOR_NAME
+    license_name = IMAGE_LICENSE
+
+    hero_img = hero["contentUrl"]
+    hero_img_alt = hero.get("alt", obj_name)
+
+    # --- Métadonnées de l'image ---
+    image_meta_rows = [
+        ("Nom de fichier", hero.get("name", "")),
+        ("Date d’acquisition", hero.get("dateCreated", "")),
+        ("Exposition (s)", hero.get("exptime", "")),
+        ("Filtre", hero.get("filter", "")),
+        ("Télescope", hero.get("telescope", "")),
+        ("Instrument", hero.get("instrument", "")),
+        ("RA", hero.get("ra", "")),
+        ("DEC", hero.get("dec", "")),
+        ("Catalogue", hero.get("catalog", "")),
+        ("Type (UI)", hero.get("objectType", "")),
+    ]
+    image_meta_rows = [(k, v) for k, v in image_meta_rows if str(v).strip() not in ("", "None", "0")]
+
+    meta_table = "\n".join(
+        f"<tr><th scope='row' class='w-50'>{html_escape(k)}</th><td>{html_escape(str(v))}</td></tr>"
+        for k, v in image_meta_rows
+    ) or "<tr><td colspan='2' class='text-muted'>Aucune métadonnée disponible.</td></tr>"
+
+    # --- Caractéristiques de l'objet (SIMBAD + Messier XLSX) ---
+    obj_rows = [
+        ("Identification (SIMBAD query)", hero.get("simbad_ident", "")),
+        ("Main ID (SIMBAD)", hero.get("simbad_main_id", "")),
+        ("OTYPE (SIMBAD)", hero.get("simbad_otype", "")),
+        ("Type (SIMBAD)", hero.get("simbad_otype_txt", "")),
+        ("Source (SIMBAD)", hero.get("simbad_source", "")),
+
+        ("Messier", hero.get("messier", "")),
+        ("NGC/IC", hero.get("ngc", "")),
+        ("Constellation", hero.get("constellation", "")),
+        ("Magnitude", hero.get("magnitude", "")),
+        ("Taille", hero.get("size", "")),
+        ("Distance (al)", hero.get("distance_ly", "")),
+        ("Type (catalogue Messier)", hero.get("messier_type", "")),
+    ]
+    obj_rows = [(k, v) for k, v in obj_rows if str(v).strip() not in ("", "None", "0")]
+
+    obj_table = "\n".join(
+        f"<tr><th scope='row' class='w-50'>{html_escape(k)}</th><td>{html_escape(str(v))}</td></tr>"
+        for k, v in obj_rows
+    ) or "<tr><td colspan='2' class='text-muted'>Aucune caractéristique disponible.</td></tr>"
+
+    # --- Tags (badges) ---
+    tags = uniq_preserve((hero.get("tags_fr", []) + hero.get("tags_en", [])))
+    tags_badges = " ".join(
+        f"<span class='badge text-bg-secondary me-1 mb-1'>{html_escape(t)}</span>"
+        for t in tags
+    ) or "<span class='text-muted'>Aucun tag</span>"
+
+    # --- Astrométrie (preview + modal) ---
+    astro = hero.get("astrometryUrl", "")
     astro_block = ""
+    astro_modal = ""
     if astro:
+        astro_id = "astroModal"
         astro_block = f"""
-  <div class="mb-4">
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <div class="fw-semibold mb-2">Astrométrie / Astrometry</div>
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="d-flex align-items-baseline justify-content-between">
+              <div class="fw-semibold">Astrométrie</div>
+              <span class="text-muted small">Cliquez pour agrandir</span>
+            </div>
+            <a href="#" data-bs-toggle="modal" data-bs-target="#{astro_id}">
+              <img src="../{html_escape(astro)}" class="img-fluid rounded mt-2 astro-preview" alt="Astrométrie {html_escape(obj_name)}">
+            </a>
+          </div>
+        </div>
+        """
+
+        astro_modal = f"""
+<div class="modal fade" id="{astro_id}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Astrométrie — {html_escape(obj_name)}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+      </div>
+      <div class="modal-body text-center">
         <img src="../{html_escape(astro)}" class="img-fluid rounded" alt="Astrométrie {html_escape(obj_name)}">
       </div>
     </div>
   </div>
+</div>
 """
 
-    cards = []
+    # --- Autres images ---
+    gallery_cards = []
     for it in items:
-        tags_line = ", ".join(uniq_preserve(it.get("tags_fr", []) + it.get("tags_en", []))[:6])
-        astro_link = ""
-        if it.get("astrometryUrl"):
-            astro_link = f"""<div class="mt-2 small"><a href="../{html_escape(it['astrometryUrl'])}" target="_blank" rel="noopener">Astrométrie</a></div>"""
-
-        messier_line = ""
-        if it.get("messier"):
-            extra = []
-            if it.get("ngc"): extra.append(f"NGC/IC: {it['ngc']}")
-            if it.get("constellation"): extra.append(f"Constellation: {it['constellation']}")
-            if it.get("magnitude") is not None: extra.append(f"Mag: {it['magnitude']}")
-            if it.get("size"): extra.append(f"Taille: {it['size']}")
-            if it.get("distance_ly") is not None: extra.append(f"Dist.(al): {it['distance_ly']}")
-            if extra:
-                messier_line = f"""<div class="small text-muted mt-2">{html_escape(" • ".join(extra))}</div>"""
-
-        cards.append(f"""
+        gallery_cards.append(f"""
         <div class="col-md-4">
           <div class="card h-100 shadow-sm">
             <a href="../{html_escape(it['contentUrl'])}" target="_blank" rel="noopener">
-              <img src="../{html_escape(it['thumbnailUrl'])}" class="card-img-top" alt="{html_escape(it['alt'])}">
+              <img src="../{html_escape(it['thumbnailUrl'])}" class="card-img-top" alt="{html_escape(it.get('alt',''))}">
             </a>
             <div class="card-body">
-              <div class="fw-semibold">{html_escape(it.get('objectName', it['name']))}</div>
+              <div class="fw-semibold">{html_escape(it.get('objectName', it.get('name','')))}</div>
               <div class="text-muted small">{html_escape(it.get('dateCreated',''))}</div>
-              <div class="small mt-2">
-                <span class="badge text-bg-secondary">{html_escape(it.get('objectType',''))}</span>
-                <span class="badge text-bg-secondary">{html_escape(it.get('catalog',''))}</span>
-                <span class="badge text-bg-secondary">{html_escape(str(it.get('filter','')))}</span>
-              </div>
-              <div class="small text-muted mt-2">{html_escape(tags_line)}</div>
-              {messier_line}
-              {astro_link}
             </div>
           </div>
         </div>
         """)
-    cards_html = "\n".join(cards)
+    gallery_cards_html = "\n".join(gallery_cards)
 
     return f"""<!doctype html>
 <html lang="fr">
@@ -957,6 +1022,7 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
   </script>
 </head>
 <body class="bg-body-tertiary">
+
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
   <div class="container">
     <a class="navbar-brand" href="../index.html">{html_escape(site_title)}</a>
@@ -965,12 +1031,92 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
 </nav>
 
 <main class="container py-4">
-  <h1 class="h3 mb-3">{html_escape(obj_name)}</h1>
-{astro_block}
+  <div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mb-3">
+    <div>
+      <h1 class="h3 mb-1">{html_escape(obj_name)}</h1>
+      <div class="text-muted small">
+        Auteur : <span class="fw-semibold">{html_escape(author)}</span> • Licence : <span class="fw-semibold">{html_escape(license_name)}</span>
+      </div>
+    </div>
+    <div class="text-end">
+      <a class="btn btn-outline-secondary btn-sm" href="../index.html">← Retour</a>
+      <a class="btn btn-primary btn-sm" href="../{html_escape(hero_img)}" target="_blank" rel="noopener">Ouvrir l’image</a>
+    </div>
+  </div>
+
+  <!-- Hero -->
+  <div class="card shadow-sm mb-4">
+    <div class="row g-0">
+      <div class="col-lg-8">
+        <a href="../{html_escape(hero_img)}" target="_blank" rel="noopener">
+          <img src="../{html_escape(hero_img)}" class="img-fluid w-100 object-hero" alt="{html_escape(hero_img_alt)}">
+        </a>
+      </div>
+      <div class="col-lg-4">
+        <div class="card-body">
+          <div class="fw-semibold mb-2">Tags</div>
+          <div class="mb-3">{tags_badges}</div>
+
+          <div class="fw-semibold mb-2">Résumé</div>
+          <div class="small text-muted">
+            Catalogue : <span class="text-body">{html_escape(hero.get("catalog",""))}</span><br>
+            Type : <span class="text-body">{html_escape(hero.get("objectType",""))}</span><br>
+            Filtre : <span class="text-body">{html_escape(str(hero.get("filter","")))}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Two tables -->
+  <div class="row g-4 mb-4">
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h2 class="h5 mb-3">Métadonnées de l’image</h2>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <tbody>
+                {meta_table}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h2 class="h5 mb-3">Caractéristiques de l’objet</h2>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <tbody>
+                {obj_table}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Astrometry -->
+  <div class="mb-4">
+    {astro_block}
+  </div>
+
+  <!-- Other exposures -->
+  <div class="d-flex align-items-baseline justify-content-between mb-2">
+    <h2 class="h5 mb-0">Autres images de cet objet</h2>
+    <span class="text-muted small">{len(items)} image(s)</span>
+  </div>
   <div class="row g-3">
-    {cards_html}
+    {gallery_cards_html}
   </div>
 </main>
+
+{astro_modal}
 
 <script src="{BOOTSTRAP_CDN_JS}"></script>
 </body>
@@ -1095,6 +1241,16 @@ function render(data) {
 def build_styles_css() -> str:
     return """
 .card-img-top { object-fit: cover; height: 240px; }
+
+.object-hero {
+  max-height: 70vh;
+  object-fit: cover;
+}
+
+.astro-preview {
+  max-height: 360px;
+  object-fit: contain;
+}
 """
 
 
@@ -1302,6 +1458,14 @@ def main():
             "keywords_fr": keywords_fr,
             "keywords_en": keywords_en,
 
+            # SIMBAD fields to display on object page
+            "simbad_ident": enrich.get("ident", ""),
+            "simbad_main_id": enrich.get("main_id", ""),
+            "simbad_otype": enrich.get("otype", ""),
+            "simbad_otype_txt": enrich.get("otype_txt", ""),
+            "simbad_source": enrich.get("source", ""),
+
+            # Messier fields
             "messier": messier_fields["messier"],
             "ngc": messier_fields["ngc"],
             "constellation": messier_fields["constellation"],
