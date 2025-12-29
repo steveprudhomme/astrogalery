@@ -5,7 +5,7 @@ Le script parcourt votre répertoire **MyWorks**, collecte les images **JPG fina
 
 ---
 
-## Nouveautés (vX.Y)
+## Nouveautés (v00.00.04)
 
 ### ✅ SIMBAD plus fiable
 - **SIMBAD utilise le nom du répertoire d’observation** (ex.: `M 27`, `Altair`) comme identifiant, plutôt que le nom de fichier ou `OBJECT` du FITS.
