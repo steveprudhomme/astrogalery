@@ -5,6 +5,12 @@ Le script parcourt votre répertoire **MyWorks**, collecte les images **JPG fina
 
 ---
 
+## Nouveauté (vX.Y) — Correction SIMBAD (tags manquants)
+**SIMBAD utilise maintenant le nom du répertoire d’observation** (ex.: `M 27`, `Altair`) comme identifiant, plutôt que le nom du fichier ou `OBJECT` du FITS, afin d’éviter les suffixes du type `LP`, `IRCut`, etc.  
+Les dossiers terminant par **`_sub`** ou **`-sub`** sont exclus.
+
+---
+
 ## Table des matières
 
 - [Fonctionnalités](#fonctionnalités)
@@ -13,8 +19,8 @@ Le script parcourt votre répertoire **MyWorks**, collecte les images **JPG fina
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Utilisation](#utilisation)
-- [Sortie générée (arborescence du site)](#sortie-générée-arborescence-du-site)
-- [Tags automatiques](#tags-automatiques)
+- [Règles de découverte des images](#règles-de-découverte-des-images)
+- [Tags automatiques (SIMBAD)](#tags-automatiques-simbad)
 - [Astrométrie (optionnelle)](#astrométrie-optionnelle)
 - [Pourquoi la recherche fonctionne en local](#pourquoi-la-recherche-fonctionne-en-local)
 - [Dépannage](#dépannage)
@@ -37,11 +43,11 @@ Le script parcourt votre répertoire **MyWorks**, collecte les images **JPG fina
   - balises OpenGraph / Twitter Cards
   - **schema.org JSON-LD** (`ImageObject`) par objet
 - **Règles Seestar respectées** :
-  - ignore les répertoires terminant par **`_sub`** (ex.: `M 77_sub`)
+  - ignore les répertoires terminant par **`_sub`** ou **`-sub`**
   - ignore les fichiers `*_thn.jpg`
   - traite l’image JPG finale dans le répertoire “non-sub”
 - **Tags automatiques** :
-  - heuristique locale + enrichissement en ligne via **SIMBAD** (stable et populaire)
+  - heuristique locale + enrichissement en ligne via **SIMBAD** (standard stable et très utilisé)
   - cache local pour accélérer les exécutions suivantes
 - **Astrométrie (optionnelle)** :
   - plate-solve via **nova.astrometry.net**
@@ -66,12 +72,6 @@ MyWorks/
     ...
 ```
 
-### Règles appliquées
-
-- ✅ Traite **seulement** les JPG **hors** dossiers `*_sub`
-- ✅ Ignore tout JPG finissant par `_thn.jpg`
-- ✅ Copie la vignette si elle existe : `nom_thn.jpg` (sinon, la grande image sert aussi de vignette)
-
 ---
 
 ## Prérequis
@@ -91,8 +91,12 @@ python --version
 - `numpy`
 - `matplotlib`
 - `astropy`
-- `pillow` (lecture JPG fallback)
-- (optionnel) rien de plus pour Bootstrap (CDN)
+- `pillow`
+
+Installer :
+```powershell
+pip install requests numpy matplotlib astropy pillow
+```
 
 ---
 
@@ -120,48 +124,42 @@ pip install requests numpy matplotlib astropy pillow
 
 ## Configuration
 
-### 1) Positionnement du script
+### 1) Dossier MyWorks
+Exécutez le script depuis votre répertoire **MyWorks** (celui qui contient les dossiers d’objets) :
 
-Placez le script `gnu_astro_galery.py` dans le dossier **MyWorks** (ou exécutez-le depuis MyWorks) car il scanne **le répertoire courant**.
-
-Exemple :
 ```powershell
 cd F:\MyWorks
 python gnu_astro_galery.py
 ```
 
 ### 2) BASE_URL (si vous publiez)
-
 Dans le script, modifiez :
 ```python
 BASE_URL = "https://example.com/seestar"
 ```
 
-- Si usage local seulement : pas critique (OpenGraph/sitemap auront un URL fictif)
-- Si publication : mettre votre URL réelle (GitHub Pages, domaine perso, etc.)
+- usage local : non bloquant
+- publication : mettez l’URL réelle (GitHub Pages, domaine perso, etc.)
 
 ### 3) Clé API astrometry.net (optionnelle)
-
 Si vous voulez la génération des images d’astrométrie :
 
-#### Créer / récupérer votre clé API
+#### Récupérer votre clé API
 1. Créez un compte sur astrometry.net (Nova)
-2. Dans votre compte, récupérez la **API Key** (section “API Key” / “Nova”)
+2. Dans votre compte, récupérez la **API Key**
 
-#### Définir la variable d’environnement sous Windows (PowerShell)
-
+#### Définir la variable d’environnement (PowerShell)
 Pour la session courante :
 ```powershell
 $env:NOVA_ASTROMETRY_API_KEY="VOTRE_CLE_ICI"
 python gnu_astro_galery.py
 ```
 
-Pour définir de façon persistante (utilisateur courant) :
+Pour définir de façon persistante :
 ```powershell
 setx NOVA_ASTROMETRY_API_KEY "VOTRE_CLE_ICI"
 ```
-
-Puis **rouvrir** PowerShell.
+Puis **rouvrez** PowerShell.
 
 ---
 
@@ -174,57 +172,43 @@ python gnu_astro_galery.py
 ```
 
 Le script :
-1. détecte toutes les images JPG finales (hors `_sub`, hors `_thn.jpg`)
+1. détecte toutes les images JPG finales (hors `_sub`/`-sub`, hors `_thn.jpg`)
 2. enrichit tags/catalogue/type d’objet
 3. génère la galerie dans `.\site`
 4. (optionnel) lance plate-solve et produit `site\astrometry\*.png`
 
-### Ouvrir la galerie
-- Double-cliquez `site\index.html`  
-ou
-- Glissez-déposez `index.html` dans votre navigateur
+Ouvrir la galerie :
+- double-cliquez `site\index.html`
 
 ---
 
-## Sortie générée (arborescence du site)
+## Règles de découverte des images
 
-```
-site/
-  index.html
-  sitemap.xml
-  robots.txt
-  assets/
-    css/styles.css
-    js/app.js
-  data/
-    images.json
-    img/
-      <images copiées ici>
-    solved/
-      <WCS header-only téléchargés>
-  gallery/
-    <une page par objet>.html
-  astrometry/
-    <PNGs RA/DEC>
-```
+Le script **inclut** :
+- tous les fichiers `*.jpg` dans les dossiers d’objets
+
+Le script **exclut** :
+- tout ce qui se trouve dans un dossier finissant par `_sub` ou `-sub`
+- tout fichier finissant par `_thn.jpg` (miniatures Seestar)
 
 ---
 
-## Tags automatiques
+## Tags automatiques (SIMBAD)
 
-### Comment ça marche
+### Identifiant envoyé à SIMBAD (important)
+Pour éviter les échecs de résolution (ex.: `M 27 LP`, `Altair IRCUT`, etc.) :
 
-- Extraction du nom d’objet (via header FITS `OBJECT` quand disponible, sinon nom de dossier)
-- Déduction de catalogue : Messier, NGC, IC, Sharpless, etc.
-- Enrichissement via **SIMBAD** (CDS) :
-  - récupère `otype` / `otype_txt`
-  - mappe vers tags (ex.: `GlC` → **amas globulaire**)
-- Cache local :
-  - écrit `cache/object_info.json`
-  - accélère les exécutions suivantes
+✅ **Le script envoie à SIMBAD le nom du dossier de l’objet** (ex.: `M 27`, `Altair`, `IC 342`)  
+❌ Il n’utilise pas le nom de fichier, ni les suffixes du FITS (`OBJECT`) pour l’identification SIMBAD.
 
-### Exemples de tags
-- `galaxie`, `galaxie spirale`, `amas globulaire`, `nébuleuse`, `nébuleuse planétaire`, etc.
+Les dossiers finissant par `_sub` ou `-sub` sont exclus.
+
+### Cache local
+Les réponses SIMBAD sont mises en cache dans :
+```
+cache/object_info.json
+```
+Cela accélère les relances et limite les requêtes.
 
 ---
 
@@ -233,71 +217,61 @@ site/
 ### Principe
 - Upload du FITS sur astrometry.net (Nova)
 - Téléchargement du **WCS header-only** via `wcs_file/<jobid>`
-- Rendu local d’un PNG (matplotlib + astropy.wcs) :
+- Rendu local d’un PNG (matplotlib + astropy.wcs)
   - image = FITS local si lisible
-  - sinon **fallback sur le JPG** (pour éviter les FITS “non-image”)
+  - sinon fallback sur le **JPG** local
 
-### Limites connues
-- Si le JPG n’est pas parfaitement aligné (resize/crop) par rapport au FITS uploadé, la grille peut être légèrement décalée.
-- Le Seestar S50 n’offre pas toujours un WCS fiable en local, d’où l’usage du plate-solve en ligne.
+### Confidentialité
+L’upload est configuré en **non-public** (`publicly_visible="n"`), mais le fichier est transmis au service pour calcul.
 
 ---
 
 ## Pourquoi la recherche fonctionne en local
 
-Le fichier `index.html` contient les données `images.json` **inlinées** dans une balise :
+Les données `images.json` sont **inlinées** dans `index.html` via :
 
 ```html
 <script id="images-data" type="application/json"> ... </script>
 ```
 
-✅ Résultat : pas besoin de serveur, pas de blocage CORS / fetch en `file:///`.
+➡️ Cela évite les problèmes de `fetch()` en `file:///` (CORS / restrictions navigateur).
 
 ---
 
 ## Dépannage
 
-### 1) “Aucun JPG final trouvé”
-- Vérifiez que vous exécutez le script dans le bon dossier (ex.: `F:\MyWorks`)
-- Vérifiez qu’il y a bien des `.jpg` non `_thn` dans des dossiers non `_sub`
+### “Tags manquants sur des objets connus (ex.: M 27, Altair)”
+- Vérifiez que l’objet a bien un dossier nommé proprement (`M 27`, `Altair`, etc.)
+- Vérifiez le cache : supprimez `cache/object_info.json` et relancez si besoin
 
-### 2) SIMBAD ne retourne rien / erreur réseau
-- Le script continue sans tags SIMBAD
-- Vérifiez votre connexion Internet
-- Relancez : le cache aide à limiter les requêtes
-
-### 3) Astrométrie: login impossible / réponse non-JSON
-- Vérifiez la variable `NOVA_ASTROMETRY_API_KEY`
-- Vérifiez que la clé est valide
-- Essayez dans PowerShell :
+### “Login Nova impossible / réponse non-JSON”
+- Vérifiez `NOVA_ASTROMETRY_API_KEY`
+- Relancez dans PowerShell avec :
 ```powershell
 echo $env:NOVA_ASTROMETRY_API_KEY
 ```
 
-### 4) Astrométrie: PNG non généré
-Ca arrive si :
-- ni le FITS ni le JPG ne peut être lu (rare)
-- le WCS téléchargé est incomplet / mismatch
-
-Le script journalise alors l’avertissement correspondant.
+### “PNG astrométrie non généré”
+- Si le FITS ne contient pas une image 2D, le script bascule sur le JPG
+- Consultez les warnings dans la console
 
 ---
 
 ## Sécurité & confidentialité
 
 - Le site généré est **local** et statique.
-- Pour l’astrométrie, le script **envoie des FITS** à astrometry.net (Nova) pour résoudre le champ.
-- Par défaut, l’upload est configuré en **non-public** (`publicly_visible="n"`), mais l’image est quand même transmise au service pour calcul.
+- SIMBAD : requêtes de métadonnées (identifiants d’objets uniquement).
+- Astrometry.net : envoi de FITS uniquement si l’option est activée (clé Nova fournie).
 
 ---
 
 ## Publication / Hébergement
 
-Options simples :
-- GitHub Pages (statique)
+Options :
+- GitHub Pages
 - Netlify
 - Cloudflare Pages
-- Serveur perso / NAS
+- NAS / serveur perso
 
 Copiez simplement le contenu du dossier `site/`.
 
@@ -305,11 +279,11 @@ Copiez simplement le contenu du dossier `site/`.
 
 ## Licence
 
-**GNU Astro Galery** 
+Choisissez une licence avant publication :
+- GPLv3 (esprit “GNU”)
+- MIT (permissif)
 
-- GPLv3
-
-> Ajoutez un fichier `LICENSE` à la racine du projet.
+Ajoutez un fichier `LICENSE`.
 
 ---
 
@@ -319,6 +293,3 @@ Copiez simplement le contenu du dossier `site/`.
 - AstroPy / FITS / WCS
 - SIMBAD (CDS) pour l’enrichissement des objets
 - Astrometry.net (Nova) pour le plate-solve
-
----
-```

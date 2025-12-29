@@ -21,7 +21,6 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.visualization import ZScaleInterval, ImageNormalize
 
-# Pour fallback JPG (local)
 from PIL import Image
 
 
@@ -36,7 +35,7 @@ ASTRO_NOVA_SITE = "https://nova.astrometry.net/"
 
 SIMBAD_TAP = "https://simbad.cds.unistra.fr/simbad/sim-tap/sync"
 
-ASTROMETRY_MODE = "latest_per_object"
+ASTROMETRY_MODE = "latest_per_object"  # "latest_per_object" or "all"
 CACHE_PATH = Path("cache") / "object_info.json"
 
 BASE_URL = "https://example.com/seestar"
@@ -56,6 +55,7 @@ LOCAL_OBJECT_DB = {
     "IC 342": ("galaxie spirale", "spiral galaxy",
                ["galaxie", "galaxie spirale"],
                ["galaxy", "spiral galaxy"]),
+    # Exemples
     "JUPITER": ("planète", "planet", ["planète"], ["planet"]),
     "DENEBOLA": ("étoile", "star", ["étoile"], ["star"]),
 }
@@ -136,6 +136,25 @@ def html_escape(s: str) -> str:
 
 
 # ------------------------------------------------------------
+# IMPORTANT: SIMBAD ident = nom du répertoire (exclure _sub / -sub)
+# ------------------------------------------------------------
+def is_sub_dirname(name: str) -> bool:
+    n = (name or "").strip().lower()
+    return n.endswith("_sub") or n.endswith("-sub")
+
+
+def simbad_ident_from_dir(obs_dir: Path) -> str:
+    """
+    Retourne un ident SIMBAD fiable basé sur le nom du dossier.
+    Exclut automatiquement les dossiers *_sub / *-sub.
+    """
+    name = obs_dir.name.strip()
+    if is_sub_dirname(name) and obs_dir.parent:
+        name = obs_dir.parent.name.strip()
+    return name
+
+
+# ------------------------------------------------------------
 # Cache SIMBAD
 # ------------------------------------------------------------
 def load_cache(cache_path: Path) -> dict:
@@ -192,7 +211,7 @@ def infer_object_type_basic(object_name: str):
     up = (object_name or "").strip().upper()
     if up in ("JUPITER", "SATURN", "MARS", "VENUS"):
         return "Planet"
-    if up in ("DENEBOLA",):
+    if up in ("DENEBOLA", "ALTAIR", "VEGA", "DENEB"):
         return "Star"
     return "Other"
 
@@ -226,8 +245,8 @@ def _simbad_query_basic(ident: str) -> dict | None:
     }
 
 
-def enrich_tags(object_name: str, cache: dict) -> dict:
-    ident = normalize_catalog_id(object_name) or object_name.strip()
+def enrich_tags(object_name_for_simbad: str, cache: dict) -> dict:
+    ident = normalize_catalog_id(object_name_for_simbad) or object_name_for_simbad.strip()
     ident_key = ident.upper()
 
     if ident_key in LOCAL_OBJECT_DB:
@@ -303,7 +322,6 @@ def extract_fits_metadata(fits_path: Path) -> dict:
 
 
 def find_stacked_fits_in_dir(obs_dir: Path) -> Path | None:
-    # tolère .fit, .fits, .fit.gz, etc
     for p in obs_dir.rglob("Stacked*.fit*"):
         return p
     return None
@@ -329,11 +347,6 @@ def estimate_scale_arcsec_per_pix(fits_path: Path):
 # Lecture image: FITS robuste
 # ------------------------------------------------------------
 def _to_2d_array(arr: np.ndarray) -> np.ndarray | None:
-    """
-    Transforme un array FITS en image 2D si possible.
-    - Si 2D: ok
-    - Si >2D: squeeze puis prend le premier plan/dernières dimensions
-    """
     if arr is None:
         return None
     arr = np.array(arr)
@@ -341,30 +354,18 @@ def _to_2d_array(arr: np.ndarray) -> np.ndarray | None:
 
     if arr.ndim == 2:
         return arr
-
-    # Ex: (n, y, x) -> prendre arr[0]
     if arr.ndim == 3:
-        # Choix simple: premier plan
         return arr[0] if arr.shape[0] <= 20 else arr[-1]
-
-    # Ex: (a,b,y,x) -> prendre [0,0]
     if arr.ndim >= 4:
-        # On va sélectionner en cascade les premières dimensions jusqu'à 2D
         while arr.ndim > 2:
             arr = arr[0]
         return arr if arr.ndim == 2 else None
-
     return None
 
 
 def read_best_image_from_fits(fits_path: Path) -> np.ndarray | None:
-    """
-    Essaie de lire une image 2D depuis n'importe quel HDU.
-    Gère 2D/3D/4D.
-    """
     try:
         with fits.open(fits_path, ignore_missing_simple=True) as hdul:
-            # Priorité: HDU ayant de la data
             for hdu in hdul:
                 data = getattr(hdu, "data", None)
                 if data is None:
@@ -378,12 +379,9 @@ def read_best_image_from_fits(fits_path: Path) -> np.ndarray | None:
     return None
 
 
-# ------------------------------------------------------------
-# Fallback image: JPG -> numpy (grayscale)
-# ------------------------------------------------------------
 def read_image_from_jpg(jpg_path: Path) -> np.ndarray | None:
     try:
-        im = Image.open(jpg_path).convert("L")  # grayscale
+        im = Image.open(jpg_path).convert("L")
         return np.array(im)
     except Exception as e:
         print(f"[WARN] Lecture JPG échouée {jpg_path.name}: {e}")
@@ -395,7 +393,7 @@ def read_image_from_jpg(jpg_path: Path) -> np.ndarray | None:
 # ------------------------------------------------------------
 def is_in_sub_folder(path: Path) -> bool:
     for part in path.parts:
-        if part.lower().endswith("_sub"):
+        if str(part).lower().endswith("_sub") or str(part).lower().endswith("-sub"):
             return True
     return False
 
@@ -413,11 +411,11 @@ def find_final_jpgs(root_dir: Path):
             dirnames[:] = []
             continue
 
-        if d.name.lower().endswith("_sub"):
+        if d.name.lower().endswith("_sub") or d.name.lower().endswith("-sub"):
             dirnames[:] = []
             continue
 
-        dirnames[:] = [x for x in dirnames if not x.lower().endswith("_sub")]
+        dirnames[:] = [x for x in dirnames if not (x.lower().endswith("_sub") or x.lower().endswith("-sub"))]
 
         for fn in filenames:
             if not fn.lower().endswith(".jpg"):
@@ -547,6 +545,15 @@ def nova_download_wcs_header_only(jobid: int, out_fits_path: Path) -> bool:
     return True
 
 
+def load_wcs_header_only(wcs_fits_path: Path) -> fits.Header | None:
+    try:
+        with fits.open(wcs_fits_path, ignore_missing_simple=True) as hdul:
+            return hdul[0].header
+    except Exception as e:
+        print(f"[WARN] Lecture WCS header-only échouée {wcs_fits_path.name}: {e}")
+        return None
+
+
 # ------------------------------------------------------------
 # ASTROMÉTRIE PNG (image + WCS header-only)
 # ------------------------------------------------------------
@@ -557,7 +564,6 @@ def make_astrometry_png_from_image_and_wcs(
     title: str = ""
 ) -> bool:
     try:
-        # Injecter NAXIS si absent (important quand WCS header-only ne le fournit pas)
         h = wcs_header.copy()
         ny, nx = image_array_2d.shape
         if h.get("NAXIS", None) is None:
@@ -596,15 +602,6 @@ def make_astrometry_png_from_image_and_wcs(
     except Exception as e:
         print(f"\n[WARN] PNG astrométrie impossible: {e}")
         return False
-
-
-def load_wcs_header_only(wcs_fits_path: Path) -> fits.Header | None:
-    try:
-        with fits.open(wcs_fits_path, ignore_missing_simple=True) as hdul:
-            return hdul[0].header
-    except Exception as e:
-        print(f"[WARN] Lecture WCS header-only échouée {wcs_fits_path.name}: {e}")
-        return None
 
 
 # ------------------------------------------------------------
@@ -914,14 +911,12 @@ def main():
     root = Path(os.getcwd())
     out = root / "site"
 
-    # IMPORTANT: clé dans variable d'environnement
     NOVA_API_KEY = os.environ.get("NOVA_ASTROMETRY_API_KEY", "").strip()
     if not NOVA_API_KEY:
         print("[INFO] NOVA_ASTROMETRY_API_KEY non défini -> pas d'astrométrie (plate solve)")
 
     cache = load_cache(root / CACHE_PATH)
 
-    # Rebuild propre
     if out.exists():
         shutil.rmtree(out)
     (out / "assets/css").mkdir(parents=True, exist_ok=True)
@@ -934,12 +929,12 @@ def main():
 
     jpgs = find_final_jpgs(root)
     if not jpgs:
-        print("Aucun JPG final trouvé (hors dossiers *_sub et hors fichiers *_thn.jpg).")
+        print("Aucun JPG final trouvé (hors dossiers *_sub/*-sub et hors fichiers *_thn.jpg).")
         return
 
     total = len(jpgs)
     processed = 0
-    print(f"🔎 {total} image(s) à traiter (hors *_sub et hors *_thn.jpg)...")
+    print(f"🔎 {total} image(s) à traiter (hors *_sub/*-sub et hors *_thn.jpg)...")
 
     items = []
     object_groups = {}
@@ -963,6 +958,7 @@ def main():
         fits_path = find_stacked_fits_in_dir(obs_dir)
         meta = extract_fits_metadata(fits_path) if fits_path else {}
 
+        # Nom affiché (UI) : FITS OBJECT si dispo, sinon nom du dossier
         object_name = meta.get("object") or obs_dir.name
         if object_name.strip().lower() in ("unknown object", "unknown", ""):
             object_name = obs_dir.name
@@ -987,7 +983,10 @@ def main():
             rel_thn = Path("data/img") / rel_thn_name
             shutil.copy2(thn_guess, out / rel_thn)
 
-        enrich = enrich_tags(object_name, cache)
+        # ✅ CHANGEMENT: SIMBAD utilise le nom du répertoire (stable) au lieu de OBJECT/filename
+        simbad_ident = simbad_ident_from_dir(obs_dir)
+        enrich = enrich_tags(simbad_ident, cache)
+
         tags_fr = uniq_preserve(enrich.get("tags_fr", []))
         tags_en = uniq_preserve(enrich.get("tags_en", []))
 
@@ -1065,10 +1064,9 @@ def main():
     save_cache(root / CACHE_PATH, cache)
     print("\n✅ Tags: terminé (cache mis à jour).")
 
-    # Tri global récent -> ancien
     items.sort(key=lambda x: x.get("dateCreatedISO", ""), reverse=True)
 
-    # Pass 2: astrométrie
+    # Pass 2: astrométrie (optionnelle)
     if nova_session:
         if ASTROMETRY_MODE == "all":
             to_solve = [it for it in items if it.get("_fitsPath")]
@@ -1116,10 +1114,7 @@ def main():
                 if wcs_header is None:
                     continue
 
-                # 1) Essayer image depuis FITS (robuste)
                 img = read_best_image_from_fits(fits_path)
-
-                # 2) Fallback : utiliser le JPG final si FITS ne donne pas d'image 2D
                 if img is None:
                     print(f"\n[WARN] Image FITS invalide: aucun HDU 2D dans {fits_path.name} -> fallback JPG")
                     img = read_image_from_jpg(jpg_path)
@@ -1140,7 +1135,6 @@ def main():
 
                 if ok_png:
                     it["astrometryUrl"] = astro_rel.as_posix()
-                    print(f"\n[OK] Lien astrométrie: {it['astrometryUrl']}")
                 else:
                     print(f"\n[WARN] PNG astrométrie non généré: {obj}")
 
