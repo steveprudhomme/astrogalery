@@ -1,57 +1,33 @@
 # GNU Astro Galery
 
-Galerie Web statique (HTML5/CSS3/Bootstrap 5) pour images du télescope intelligent **Seestar S50**.  
-Le script parcourt votre répertoire **MyWorks**, collecte les images **JPG finales**, enrichit automatiquement les **tags** (SIMBAD + catalogue Messier), génère une **front page** triée du plus récent au plus vieux, des **pages par objet** soignées, et peut produire (optionnellement) une **image d’astrométrie** (grille RA/DEC) via **astrometry.net** avec **cache persistant**.
+**GNU Astro Galery** est un générateur de galerie Web statique (HTML5 / CSS3 / Bootstrap 5) dédié aux images produites par le **télescope intelligent Seestar S50**.
 
----
-
-## Nouveautés (vX.Y)
-
-### ✅ Page objet “premium”
-Chaque objet a maintenant une page dédiée (Bootstrap 5) avec :
-- **Image principale prédominante** (hero)
-- **Auteur** : *Steve Prud’Homme*
-- **Licence** : *Creative Commons CC0 1.0*
-- Section **Métadonnées de l’image** (tableau)
-- Section **Caractéristiques de l’objet** (tableau, SIMBAD + Messier XLSX)
-- **Astrométrie** en aperçu (taille raisonnable) + **clic → agrandissement (modal)**
-
-### ✅ SIMBAD plus fiable
-- SIMBAD utilise le **nom du répertoire d’observation** (ex.: `M 27`, `Altair`) comme identifiant.
-- Exclusion des dossiers finissant par **`_sub`** ou **`-sub`**.
-
-### ✅ Enrichissement Messier via fichier XLSX
-Si l’objet est de type **Messier** (`M1` ou `M 1`), le script lit un fichier Excel et ajoute :
-- **Type** (ex.: nébuleuse planétaire, amas globulaire, galaxie…)
-- **Nom NGC/IC**
-- **Constellation**
-- **Magnitude**
-- **Taille**
-- **Distance (al)**
-
-### ✅ Cache persistant d’astrométrie
-Évite de re-uploader/re-solve à chaque génération :
-- cache dans `cache/astrometry/`
-- index `cache/astrometry/index.json`
-- réutilisation automatique de `*-wcs.fits` + `*-astrometry.png` si la source n’a pas changé
+Le projet vise une approche à la fois **esthétique**, **scientifique** et **documentaire**, en mettant l’accent sur :
+- la **page objet** comme unité centrale,
+- l’enrichissement automatique des données astronomiques,
+- la **traçabilité** (métadonnées, catalogues, astrométrie),
+- et une **navigation claire** adaptée à la diffusion publique.
 
 ---
 
 ## Table des matières
+
 - [Fonctionnalités](#fonctionnalités)
-- [Structure des données Seestar (hypothèses)](#structure-des-données-seestar-hypothèses)
+- [Philosophie de navigation](#philosophie-de-navigation)
+- [Structure des données Seestar](#structure-des-données-seestar)
 - [Prérequis](#prérequis)
 - [Installation](#installation)
-- [Configuration](#configuration)
+- [Utilisation](#utilisation)
 - [Catalogue Messier (XLSX)](#catalogue-messier-xlsx)
+- [Enrichissement via SIMBAD](#enrichissement-via-simbad)
 - [Pages objet](#pages-objet)
-- [Astrométrie (optionnelle)](#astrométrie-optionnelle)
-- [Cache astrométrie (persistant)](#cache-astrométrie-persistant)
-- [Règles de découverte des images](#règles-de-découverte-des-images)
-- [SEO / Données structurées (schema.org)](#seo--données-structurées-schemaorg)
+- [Astrométrie](#astrométrie)
+- [Cache astrométrie](#cache-astrométrie)
+- [Règles d’inclusion / exclusion](#règles-dinclusion--exclusion)
+- [SEO et données structurées](#seo-et-données-structurées)
 - [Dépannage](#dépannage)
-- [Sécurité & confidentialité](#sécurité--confidentialité)
-- [Publication / Hébergement](#publication--hébergement)
+- [Sécurité et confidentialité](#sécurité-et-confidentialité)
+- [Publication](#publication)
 - [Licence](#licence)
 - [Crédits](#crédits)
 
@@ -59,51 +35,65 @@ Si l’objet est de type **Messier** (`M1` ou `M 1`), le script lit un fichier E
 
 ## Fonctionnalités
 
-- **Site statique** (aucun backend requis)
-  - `index.html` avec **toutes les images** triées du plus récent au plus vieux
-  - recherche instantanée + filtres (type d’objet, catalogue)
-  - pages par objet (ex.: `gallery/m-51.html`)
-- **Pages objet** :
-  - image hero prédominante
-  - auteur/licence visibles
-  - 2 tableaux : **Métadonnées** et **Caractéristiques**
-  - image **astrométrique cliquable** (modal)
-- **Bootstrap 5** (responsive)
-- **SEO / découvrabilité** :
-  - `sitemap.xml`, `robots.txt`
-  - balises OpenGraph / Twitter Cards
-  - **JSON-LD schema.org** (`ImageObject`) par objet
-- **Règles Seestar respectées** :
-  - ignore les répertoires finissant par **`_sub`** ou **`-sub`**
-  - ignore les fichiers `*_thn.jpg`
-  - traite l’image JPG finale du répertoire “non-sub”
-- **Tags automatiques** :
-  - enrichissement via **SIMBAD**
-  - cache local de résultats SIMBAD
-- **Enrichissement Messier** :
-  - lecture d’un catalogue XLSX local (voir section dédiée)
-  - ajout type, NGC/IC, constellation, magnitude, taille, distance
-- **Astrométrie (optionnelle)** :
-  - plate-solve via **nova.astrometry.net**
-  - rendu local d’un PNG “grille RA/DEC”
-  - fallback JPG si FITS sans image 2D
-  - **cache persistant** pour accélérer les relances
+- Génération d’un **site Web statique**
+- Page d’accueil avec :
+  - toutes les images,
+  - triées du **plus récent au plus ancien**,
+  - recherche textuelle instantanée,
+  - filtres par type d’objet et catalogue
+- **Clic sur l’image (page d’accueil) → page de l’objet**
+- Pages objet individuelles avec :
+  - image principale prédominante,
+  - auteur et licence,
+  - tableau des métadonnées de l’image,
+  - tableau des caractéristiques astronomiques,
+  - image astrométrique cliquable
+- Enrichissement automatique via :
+  - **SIMBAD**
+  - **catalogue Messier (XLSX local)**
+- Astrométrie optionnelle via **astrometry.net**
+- Cache persistant pour :
+  - SIMBAD
+  - astrométrie (WCS + PNG)
+- SEO :
+  - sitemap.xml
+  - robots.txt
+  - JSON-LD (schema.org / ImageObject)
 
 ---
 
-## Structure des données Seestar (hypothèses)
+## Philosophie de navigation
+
+La galerie adopte une structure claire et cohérente :
+
+| Élément | Rôle |
+|------|------|
+| Page d’accueil | Découverte visuelle, exploration, filtrage |
+| Page objet | Analyse scientifique, métadonnées, astrométrie |
+| Image brute | Consultation ou téléchargement ponctuel |
+
+### Navigation clé
+- ✅ clic sur l’image de la page d’accueil → **page objet**
+- ❌ plus de liens redondants sous les cartes
+- 🔭 astrométrie accessible **uniquement sur la page objet**
+- 📷 image HD accessible depuis la page objet
+
+---
+
+## Structure des données Seestar
+
+Structure attendue (exemple) :
 
 ```
 MyWorks/
   M 51/
-    ... (fichiers)
     image_finale.jpg
-    image_finale_thn.jpg (optionnel)
-    Stacked_...fit / Stacked_...fits (optionnel mais recommandé)
+    image_finale_thn.jpg
+    Stacked_*.fit
   M 51_sub/      <- ignoré
   M 51-sub/      <- ignoré
-  IC 342/
-    ...
+  Altair/
+    image.jpg
 ```
 
 ---
@@ -111,24 +101,13 @@ MyWorks/
 ## Prérequis
 
 ### Système
-- Windows 10/11
+- Windows 10 / 11
 
 ### Python
-- Python **3.10+** recommandé :
-```powershell
-python --version
+- Python **3.10+** recommandé
+
+### Dépendances Python
 ```
-
-### Dépendances
-- `requests`
-- `numpy`
-- `matplotlib`
-- `astropy`
-- `pillow`
-- `openpyxl` (requis pour le XLSX Messier)
-
-Installation :
-```powershell
 pip install requests numpy matplotlib astropy pillow openpyxl
 ```
 
@@ -136,202 +115,191 @@ pip install requests numpy matplotlib astropy pillow openpyxl
 
 ## Installation
 
-```powershell
-git clone <votre-repo>
+```
+git clone <repo>
 cd GNU-Astro-Galery
 python -m venv .venv
-.\.venv\Scripts\activate
-pip install -U pip
-pip install requests numpy matplotlib astropy pillow openpyxl
+.venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 ---
 
-## Configuration
+## Utilisation
 
-### 1) Dossier MyWorks
-Exécutez depuis le dossier qui contient vos répertoires d’objets :
+Depuis le dossier contenant `MyWorks` :
 
-```powershell
-cd F:\MyWorks
-python gnu_astro_galery.py
+```
+python generate_gallery.py
 ```
 
-### 2) BASE_URL (si vous publiez)
-Dans le script :
-```python
-BASE_URL = "https://example.com/seestar"
-```
-- en local : non bloquant
-- en ligne : mettez l’URL réelle (sinon OG/sitemap pointent vers une URL fictive)
+Le site est généré dans :
 
-### 3) Auteur + licence
-Dans le script :
-```python
-CREATOR_NAME = "Steve Prud’Homme"
-IMAGE_LICENSE = "Creative Commons CC0 1.0"
+```
+MyWorks/site/
 ```
 
 ---
 
 ## Catalogue Messier (XLSX)
 
-### Fichier attendu
-Placez ce fichier **à côté du script** (ou dans le dossier `MyWorks`) :
+Le script charge automatiquement un fichier Excel local nommé :
 
-- **`Objets Messiers..xlsx`**
+```
+Objets Messiers..xlsx
+```
 
-Le script cherche dans l’ordre :
-1) à côté du script  
-2) dans `MyWorks`  
-3) fallback : premier `*.xlsx` contenant “Messier” dans le nom
+Ce fichier doit contenir (au minimum) :
+- Numéro Messier (M 1, M27, etc.)
+- Type d’objet
+- NGC / IC
+- Constellation
+- Magnitude
+- Taille
+- Distance (années-lumière)
 
-### Champs ajoutés automatiquement
-Pour un objet `M1` / `M 1` / `m001` :
-- `messier` (ex. `M 27`)
-- `ngc` (ex. `NGC 6853`)
-- `constellation`
-- `magnitude`
-- `size`
-- `distance_ly` (années-lumière)
-- `messier_type`
+Les données sont ajoutées automatiquement aux pages objet.
 
-Ces champs sont écrits dans :
-- `site/data/images.json`
-- et affichés sur la page objet (section **Caractéristiques de l’objet**)
+---
+
+## Enrichissement via SIMBAD
+
+- Le script interroge SIMBAD **à partir du nom du répertoire** (ex. `M 27`, `Altair`)
+- Les résultats sont mis en cache local
+- Informations typiques :
+  - identifiant principal,
+  - type astrophysique,
+  - désignations,
+  - mots-clés
 
 ---
 
 ## Pages objet
 
-Les pages objet sont générées dans :
-```
-site/gallery/<slug>.html
-```
+Chaque objet possède une page dédiée :
 
-Elles contiennent :
-- **Hero image** (dominante, responsive)
-- **Auteur** + **Licence**
-- Tableau **Métadonnées de l’image**
-- Tableau **Caractéristiques de l’objet**
-  - infos SIMBAD (main_id, otype, otype_txt, etc.)
-  - infos Messier (si applicable)
-- **Astrométrie** en petit aperçu + **modal** au clic
-
----
-
-## Astrométrie (optionnelle)
-
-### Obtenir une clé API Nova (astrometry.net)
-1) créer un compte astrometry.net (Nova)
-2) récupérer la **API Key**
-3) configurer la variable d’environnement :
-
-Session PowerShell :
-```powershell
-$env:NOVA_ASTROMETRY_API_KEY="VOTRE_CLE_ICI"
-python gnu_astro_galery.py
-```
-
-Persistant :
-```powershell
-setx NOVA_ASTROMETRY_API_KEY "VOTRE_CLE_ICI"
-```
-Puis **rouvrir** PowerShell.
-
-### Notes importantes
-- Upload configuré en **non-public** (`publicly_visible="n"`)
-- Si le FITS ne contient pas d’image 2D exploitable, le rendu PNG utilise le **JPG** local
+- Image principale prédominante
+- **Auteur** : Steve Prud’Homme
+- **Licence** : Creative Commons CC0 1.0
+- Section **Métadonnées de l’image** :
+  - date,
+  - instrument,
+  - filtre,
+  - durée d’exposition,
+  - résolution, etc.
+- Section **Caractéristiques de l’objet** :
+  - données SIMBAD,
+  - données Messier (si applicable)
+- Section **Astrométrie** :
+  - aperçu réduit,
+  - clic pour agrandir
 
 ---
 
-## Cache astrométrie (persistant)
+## Astrométrie
 
-Stockage :
-- `cache/astrometry/index.json`
-- `cache/astrometry/<cache-key>-wcs.fits`
-- `cache/astrometry/<cache-key>-astrometry.png`
+### Optionnelle — via astrometry.net
 
-Le cache est réutilisé si :
-- `wcs.fits` + `astrometry.png` existent
-- ET la source n’a pas changé (empreinte **taille + mtime**)
+Une clé API Nova est requise.
 
-> Le cache est **hors de `site/`** pour survivre aux régénérations.
+Configuration temporaire :
+```
+set NOVA_ASTROMETRY_API_KEY=VOTRE_CLE
+```
+
+Ou persistante :
+```
+setx NOVA_ASTROMETRY_API_KEY "VOTRE_CLE"
+```
 
 ---
 
-## Règles de découverte des images
+## Cache astrométrie
+
+Les résultats sont mis en cache dans :
+
+```
+cache/astrometry/
+```
+
+- WCS FITS
+- PNG astrométrique
+- index JSON
+
+Le cache évite les re-soumissions inutiles.
+
+---
+
+## Règles d’inclusion / exclusion
 
 Inclus :
-- tous les `*.jpg` dans les dossiers d’objets
+- fichiers `.jpg` finaux
 
 Exclus :
-- dossiers finissant par `_sub` ou `-sub`
+- dossiers se terminant par `_sub` ou `-sub`
 - fichiers `*_thn.jpg`
 
 ---
 
-## SEO / Données structurées (schema.org)
+## SEO et données structurées
 
-- JSON-LD `ImageObject` injecté dans chaque page objet
-- `sitemap.xml` généré automatiquement
-- `robots.txt` généré automatiquement
+- JSON-LD `ImageObject` par page objet
+- sitemap.xml automatique
+- robots.txt automatique
+- balises OpenGraph
 
 ---
 
 ## Dépannage
 
-### “Tags SIMBAD manquants”
-- Vérifier que le nom du dossier est propre (`Altair`, `M 27`, etc.)
-- Purger le cache :
-  - `cache/object_info.json`
+### Erreur WinError 5 (permissions)
+- fermer les explorateurs ouverts sur `site/`
+- supprimer le dossier `site/` puis relancer
+- éviter les dossiers synchronisés (OneDrive)
 
-### “Le XLSX Messier n’est pas lu”
-- vérifier le nom : `Objets Messiers..xlsx`
-- vérifier `openpyxl` :
-```powershell
-pip show openpyxl
-```
-
-### “Astrométrie relancée tout le temps”
-- vérifier que `cache/astrometry/` n’est pas supprimé
-- si vos fichiers FITS/JPG sont réécrits souvent, le `mtime` change → cache invalidé
+### SIMBAD incomplet
+- vérifier le nom du dossier
+- vider le cache SIMBAD si nécessaire
 
 ---
 
-## Sécurité & confidentialité
+## Sécurité et confidentialité
 
-- Site généré : **local et statique**
-- SIMBAD : requêtes metadata (identifiants uniquement)
-- Astrometry.net : upload FITS si activé (clé Nova), non-public
+- Site 100 % statique
+- Aucune donnée personnelle exposée
+- Astrometry.net : images non publiques
 
 ---
 
-## Publication / Hébergement
+## Publication
 
-Copiez le dossier `site/` vers :
+Le dossier `site/` peut être publié sur :
 - GitHub Pages
 - Netlify
 - Cloudflare Pages
-- NAS / serveur perso
+- serveur personnel
 
 ---
 
 ## Licence
 
-Choisissez une licence pour le code :
-- GPLv3 (esprit “GNU”)
-- MIT (permissif)
+Le **code** peut être distribué sous licence GNU (GPLv3 recommandée).  
+Les **images** sont publiées sous :
 
-Ajoutez `LICENSE`.
+> **Creative Commons CC0 1.0**
 
 ---
 
 ## Crédits
 
+- AstroPy
+- SIMBAD (CDS)
+- astrometry.net
 - Bootstrap 5
-- AstroPy (FITS/WCS)
 - Pillow
 - OpenPyXL
-- SIMBAD (CDS)
-- Astrometry.net (Nova)
+
+---
+
+**Auteur**  
+Steve Prud’Homme

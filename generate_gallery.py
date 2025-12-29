@@ -1,4 +1,3 @@
-```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -1155,25 +1154,14 @@ function buildCard(item) {
   const col = document.createElement('div');
   col.className = 'col-12 col-sm-6 col-lg-4';
 
-  const objLink = item.objectPage ? `<div class="mt-2 small"><a href="${item.objectPage}">Page objet</a></div>` : ``;
-  const astroLink = item.astrometryUrl ? `<div class="mt-2 small"><a href="${item.astrometryUrl}" target="_blank" rel="noopener">Astrométrie</a></div>` : ``;
-
-  const tags = [...new Set([...(item.tags_fr||[]), ...(item.tags_en||[])])].slice(0,6).join(', ');
-
-  let messierLine = '';
-  if (item.messier) {
-    const extra = [];
-    if (item.ngc) extra.push(`NGC/IC: ${item.ngc}`);
-    if (item.constellation) extra.push(`Const: ${item.constellation}`);
-    if (item.magnitude != null) extra.push(`Mag: ${item.magnitude}`);
-    if (item.size) extra.push(`Taille: ${item.size}`);
-    if (item.distance_ly != null) extra.push(`Dist(al): ${item.distance_ly}`);
-    if (extra.length) messierLine = `<div class="small text-muted mt-2">${extra.join(' • ')}</div>`;
-  }
+  const tags = [...new Set([...(item.tags_fr||[]), ...(item.tags_en||[])])]
+    .slice(0,6)
+    .map(t => `<span class="badge text-bg-secondary me-1 mb-1">${t}</span>`)
+    .join('');
 
   col.innerHTML = `
     <div class="card h-100 shadow-sm">
-      <a href="${item.contentUrl}" target="_blank" rel="noopener">
+      <a href="${item.objectPage || item.contentUrl}">
         <img src="${item.thumbnailUrl}" class="card-img-top" alt="${item.alt}">
       </a>
       <div class="card-body">
@@ -1184,10 +1172,7 @@ function buildCard(item) {
           <span class="badge text-bg-secondary">${item.catalog || ''}</span>
           <span class="badge text-bg-secondary">${item.filter || ''}</span>
         </div>
-        <div class="small text-muted mt-2">${tags}</div>
-        ${messierLine}
-        ${objLink}
-        ${astroLink}
+        <div class="mt-2">${tags}</div>
       </div>
     </div>
   `;
@@ -1212,13 +1197,13 @@ function render(data) {
   stats.textContent = `${filtered.length} image(s) affichée(s) / ${data.length} au total`;
 }
 
-(async function main() {
+(function main() {
   let data;
   try {
     data = JSON.parse(document.getElementById('images-data').textContent);
   } catch (e) {
     console.error("Erreur chargement données:", e);
-    document.getElementById('stats').textContent = "Impossible de charger les données (voir console F12).";
+    document.getElementById('stats').textContent = "Impossible de charger les données.";
     return;
   }
 
@@ -1226,6 +1211,7 @@ function render(data) {
 
   const typeSelect = document.getElementById('typeSelect');
   const catalogSelect = document.getElementById('catalogSelect');
+
   fillSelect(typeSelect, uniq(data.map(d => d.objectType).filter(Boolean)));
   fillSelect(catalogSelect, uniq(data.map(d => d.catalog).filter(Boolean)));
 
@@ -1686,4 +1672,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
