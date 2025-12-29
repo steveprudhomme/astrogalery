@@ -1,4 +1,3 @@
-````markdown
 # GNU Astro Galery
 
 Galerie Web statique (HTML5/CSS3/Bootstrap 5) pour images du télescope intelligent **Seestar S50**.  
