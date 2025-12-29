@@ -1,3 +1,4 @@
+````markdown
 # GNU Astro Galery
 
 Galerie Web statique (HTML5/CSS3/Bootstrap 5) pour images du télescope intelligent **Seestar S50**.  
@@ -11,7 +12,7 @@ Le script parcourt votre répertoire **MyWorks**, collecte les images **JPG fina
 - **SIMBAD utilise le nom du répertoire d’observation** (ex.: `M 27`, `Altair`) comme identifiant, plutôt que le nom de fichier ou `OBJECT` du FITS.
 - Exclusion systématique des dossiers finissant par **`_sub`** ou **`-sub`**.
 
-### ✅ Enrichissement Messier via fichier XLSX (nouveau)
+### ✅ Enrichissement Messier via fichier XLSX
 Si l’objet est de type **Messier** (`M1` ou `M 1`), le script lit un **catalogue Excel** placé à côté du script et ajoute automatiquement :
 - **Type** (ex.: nébuleuse planétaire, amas globulaire, galaxie…)
 - **Nom NGC/IC** (si présent)
@@ -20,10 +21,20 @@ Si l’objet est de type **Messier** (`M1` ou `M 1`), le script lit un **catalog
 - **Taille**
 - **Distance (al)**
 
-Le fichier attendu est : **`Objets Messiers..xlsx`**.
+Fichier attendu : **`Objets Messiers..xlsx`**.
 
-> Note : certaines magnitudes dans l’Excel peuvent être interprétées comme dates (Excel).  
-> Le script corrige cela automatiquement (ex.: `2025-04-08` → `8.4`).
+### ✅ Cache persistant d’astrométrie (nouveau)
+Pour éviter de **ré-uploader**, **re-solve** et **re-télécharger** à chaque génération :
+
+- Les fichiers astrométriques sont désormais mis en cache dans :
+  - `cache/astrometry/`
+  - index : `cache/astrometry/index.json`
+- Le script **réutilise automatiquement** :
+  - le WCS header-only `*-wcs.fits`
+  - le PNG `*-astrometry.png`
+- Le solve ne se relance que si le FITS/JPG source a changé (taille ou date modifiée).
+
+> Important : comme `site/` est régénéré à chaque exécution, ce cache **est volontairement hors de `site/`** pour survivre aux runs.
 
 ---
 
@@ -35,10 +46,10 @@ Le fichier attendu est : **`Objets Messiers..xlsx`**.
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Catalogue Messier (XLSX)](#catalogue-messier-xlsx)
-- [Utilisation](#utilisation)
+- [Astrométrie (optionnelle)](#astrométrie-optionnelle)
+- [Cache astrométrie (persistant)](#cache-astrométrie-persistant)
 - [Règles de découverte des images](#règles-de-découverte-des-images)
 - [Tags automatiques (SIMBAD)](#tags-automatiques-simbad)
-- [Astrométrie (optionnelle)](#astrométrie-optionnelle)
 - [Pourquoi la recherche fonctionne en local](#pourquoi-la-recherche-fonctionne-en-local)
 - [Dépannage](#dépannage)
 - [Sécurité & confidentialité](#sécurité--confidentialité)
@@ -66,10 +77,14 @@ Le fichier attendu est : **`Objets Messiers..xlsx`**.
 - **Tags automatiques** :
   - heuristique locale + enrichissement en ligne via **SIMBAD** (standard stable et très utilisé)
   - cache local pour accélérer les exécutions suivantes
+- **Enrichissement Messier** :
+  - lecture d’un catalogue XLSX local (voir section dédiée)
+  - ajout du type, NGC/IC, constellation, magnitude, taille, distance
 - **Astrométrie (optionnelle)** :
   - plate-solve via **nova.astrometry.net**
   - rendu local d’un PNG “grille RA/DEC” pour la page objet
   - fallback automatique si le FITS n’a pas d’image 2D : utilisation du **JPG** local
+  - **cache persistant** (nouveau) pour éviter les re-solves
 
 ---
 
@@ -110,7 +125,7 @@ python --version
 - `matplotlib`
 - `astropy`
 - `pillow`
-- `openpyxl` (**nouveau**, requis pour le XLSX Messier)
+- `openpyxl` (**requis pour le XLSX Messier**)
 
 Installer :
 ```powershell
@@ -208,25 +223,42 @@ Ces champs sont :
 - utilisables par la recherche et les filtres
 - affichés sur la page objet et/ou dans la carte (selon la version)
 
+> Note : certaines magnitudes dans l’Excel peuvent être interprétées comme dates (Excel).  
+> Le script corrige cela automatiquement (ex.: `2025-04-08` → `8.4`).
+
 ---
 
-## Utilisation
+## Astrométrie (optionnelle)
 
-Depuis le dossier MyWorks :
+### Principe
+- Upload du FITS sur astrometry.net (Nova)
+- Téléchargement du **WCS header-only** via `wcs_file/<jobid>`
+- Rendu local d’un PNG (matplotlib + astropy.wcs)
+  - image = FITS local si lisible
+  - sinon fallback sur le **JPG** local
 
-```powershell
-python gnu_astro_galery.py
-```
+### Confidentialité
+L’upload est configuré en **non-public** (`publicly_visible="n"`), mais le fichier est transmis au service pour calcul.
 
-Le script :
-1. détecte toutes les images JPG finales (hors `_sub`/`-sub`, hors `_thn.jpg`)
-2. enrichit tags/catalogue/type d’objet
-3. enrichit les objets Messier avec le fichier XLSX (si présent)
-4. génère la galerie dans `.\site`
-5. (optionnel) lance plate-solve et produit `site\astrometry\*.png`
+---
 
-Ouvrir la galerie :
-- double-cliquez `site\index.html`
+## Cache astrométrie (persistant)
+
+### Où sont stockés les fichiers ?
+- `cache/astrometry/index.json` : index (cache-key → fingerprint)
+- `cache/astrometry/<cache-key>-wcs.fits` : WCS header-only
+- `cache/astrometry/<cache-key>-astrometry.png` : rendu PNG
+
+### Quand le script réutilise le cache ?
+Le cache est utilisé si :
+- le couple `(wcs.fits + astrometry.png)` existe
+- ET si le fichier source (FITS/JPG) n’a pas changé (fingerprint basé sur taille + mtime)
+
+Dans ce cas :
+- **aucun upload Nova**
+- **aucun solve**
+- **aucun re-téléchargement**
+- le script copie simplement les fichiers vers `site/` pour les pages objets
 
 ---
 
@@ -260,20 +292,6 @@ Cela accélère les relances et limite les requêtes.
 
 ---
 
-## Astrométrie (optionnelle)
-
-### Principe
-- Upload du FITS sur astrometry.net (Nova)
-- Téléchargement du **WCS header-only** via `wcs_file/<jobid>`
-- Rendu local d’un PNG (matplotlib + astropy.wcs)
-  - image = FITS local si lisible
-  - sinon fallback sur le **JPG** local
-
-### Confidentialité
-L’upload est configuré en **non-public** (`publicly_visible="n"`), mais le fichier est transmis au service pour calcul.
-
----
-
 ## Pourquoi la recherche fonctionne en local
 
 Les données `images.json` sont **inlinées** dans `index.html` via :
@@ -300,12 +318,10 @@ Les données `images.json` sont **inlinées** dans `index.html` via :
 pip show openpyxl
 ```
 
-### “Login Nova impossible / réponse non-JSON”
-- Vérifiez `NOVA_ASTROMETRY_API_KEY`
-- Relancez dans PowerShell avec :
-```powershell
-echo $env:NOVA_ASTROMETRY_API_KEY
-```
+### “Astrométrie relancée à chaque run”
+- Vérifiez que `cache/astrometry/` n’est pas supprimé
+- Vérifiez que les fichiers source FITS/JPG ne sont pas réécrits automatiquement par un autre logiciel
+- Supprimez `cache/astrometry/index.json` si vous voulez forcer une reconstruction
 
 ---
 
@@ -347,3 +363,4 @@ Ajoutez un fichier `LICENSE`.
 - OpenPyXL
 - SIMBAD (CDS) pour l’enrichissement des objets
 - Astrometry.net (Nova) pour le plate-solve
+````

@@ -1,3 +1,4 @@
+```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -42,6 +43,10 @@ CACHE_PATH = Path("cache") / "object_info.json"
 # Catalogue Messier (XLSX) placé au même endroit que le script
 MESSIER_XLSX_NAME = "Objets Messiers..xlsx"
 
+# Cache astrométrie (persistant, hors de /site)
+ASTRO_CACHE_DIR = Path("cache") / "astrometry"
+ASTRO_CACHE_INDEX = ASTRO_CACHE_DIR / "index.json"
+
 BASE_URL = "https://example.com/seestar"
 SITE_TITLE = "Galerie Seestar S50"
 CREATOR_NAME = "Steve Prud’Homme"
@@ -83,7 +88,7 @@ SIMBAD_OTYPE_MAP = {
 
 
 # ------------------------------------------------------------
-# Utilitaires
+# Utils
 # ------------------------------------------------------------
 def slugify(text: str) -> str:
     text = (text or "").strip().lower()
@@ -138,6 +143,28 @@ def html_escape(s: str) -> str:
               .replace("'", "&#039;"))
 
 
+def load_json(path: Path) -> dict:
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def save_json(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def file_fingerprint(p: Path) -> str:
+    """
+    Fingerprint rapide et stable (sans lire tout le fichier), pratique en local.
+    """
+    st = p.stat()
+    return f"{st.st_size}-{st.st_mtime_ns}"
+
+
 # ------------------------------------------------------------
 # IMPORTANT: SIMBAD ident = nom du répertoire (exclure _sub / -sub)
 # ------------------------------------------------------------
@@ -186,8 +213,8 @@ def normalize_messier_id(text: str) -> str | None:
 
 def parse_mag_cell(val) -> float | None:
     """
-    Dans ton fichier, la magnitude est parfois interprétée comme une date Excel.
-    On reconstruit alors la magnitude comme 'jour.mois' -> ex: 2025-04-08 => 8.4
+    Certaines magnitudes dans Excel peuvent être lues comme date.
+    On reconstruit alors "jour.mois" (ex 2025-04-08 -> 8.4).
     """
     if val is None:
         return None
@@ -197,24 +224,20 @@ def parse_mag_cell(val) -> float | None:
         except Exception:
             return None
     if isinstance(val, (datetime, date)):
-        # magnitude = day.month  -> 8.4, 6.5, 4.1...
         d = val.day
         m = val.month
         try:
             return round(d + (m / 10.0), 1)
         except Exception:
             return None
-    # string
     s = str(val).strip().replace(",", ".")
     try:
         return float(s)
     except Exception:
-        # cas "8.4" ou "8/4"
         s2 = re.sub(r"[^\d./]", "", s)
         if "/" in s2:
             parts = s2.split("/")
             if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                # 8/4 -> 8.4
                 return round(int(parts[0]) + int(parts[1]) / 10.0, 1)
         return None
 
@@ -233,19 +256,7 @@ def extract_ngc_ic_from_name(name: str) -> str:
 
 def load_messier_catalog(xlsx_path: Path) -> dict:
     """
-    Retourne dict:
-      key 'M 1' -> {
-        'm': 1,
-        'ngc_name': 'NGC 1952 Nébuleuse du Crabe',
-        'ngc_id': 'NGC 1952',
-        'type': 'Reste de supernova',
-        'constellation': 'Taureau',
-        'ra': '5h 34.5m',
-        'dec': "+22° 1.0'",
-        'mag': 8.4,
-        'size': '6.0x4.0',
-        'distance_ly': 6300
-      }
+    Retourne dict: 'M 1' -> champs (type, ngc, constellation, mag, taille, distance...)
     """
     if not xlsx_path.exists():
         return {}
@@ -253,7 +264,6 @@ def load_messier_catalog(xlsx_path: Path) -> dict:
     wb = load_workbook(xlsx_path, data_only=True)
     ws = wb[wb.sheetnames[0]]
 
-    # lecture header
     headers = {}
     for c in range(1, 40):
         v = ws.cell(1, c).value
@@ -327,15 +337,12 @@ def load_messier_catalog(xlsx_path: Path) -> dict:
 
 
 def find_messier_xlsx(script_dir: Path, cwd: Path) -> Path | None:
-    # Priorité : même dossier que le script
     p1 = script_dir / MESSIER_XLSX_NAME
     if p1.exists():
         return p1
-    # Sinon : dossier courant
     p2 = cwd / MESSIER_XLSX_NAME
     if p2.exists():
         return p2
-    # Sinon : chercher un xlsx contenant "Messier"
     for base in (script_dir, cwd):
         for p in base.glob("*.xlsx"):
             if "messier" in p.name.lower():
@@ -471,7 +478,7 @@ def enrich_tags(object_name_for_simbad: str, cache: dict) -> dict:
 
 
 # ------------------------------------------------------------
-# FITS / métadonnées
+# FITS / metadata
 # ------------------------------------------------------------
 def extract_fits_metadata(fits_path: Path) -> dict:
     try:
@@ -516,7 +523,7 @@ def estimate_scale_arcsec_per_pix(fits_path: Path):
 
 
 # ------------------------------------------------------------
-# Lecture image: FITS robuste
+# Image read: FITS robust
 # ------------------------------------------------------------
 def _to_2d_array(arr: np.ndarray) -> np.ndarray | None:
     if arr is None:
@@ -561,7 +568,7 @@ def read_image_from_jpg(jpg_path: Path) -> np.ndarray | None:
 
 
 # ------------------------------------------------------------
-# Découverte des JPG finaux
+# JPG discovery (exclude *_sub/*-sub and *_thn.jpg)
 # ------------------------------------------------------------
 def is_in_sub_folder(path: Path) -> bool:
     for part in path.parts:
@@ -604,7 +611,7 @@ def find_final_jpgs(root_dir: Path):
 
 
 # ------------------------------------------------------------
-# Nova helpers (inchangé)
+# Nova helpers
 # ------------------------------------------------------------
 def _json_or_raise(r: requests.Response, context: str) -> dict:
     r.raise_for_status()
@@ -728,7 +735,7 @@ def load_wcs_header_only(wcs_fits_path: Path) -> fits.Header | None:
 
 
 # ------------------------------------------------------------
-# ASTROMÉTRIE PNG (image + WCS header-only)
+# ASTROMETRY PNG (image + WCS header-only)
 # ------------------------------------------------------------
 def make_astrometry_png_from_image_and_wcs(
     image_array_2d: np.ndarray,
@@ -901,7 +908,6 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
         if it.get("astrometryUrl"):
             astro_link = f"""<div class="mt-2 small"><a href="../{html_escape(it['astrometryUrl'])}" target="_blank" rel="noopener">Astrométrie</a></div>"""
 
-        # ligne info Messier si dispo
         messier_line = ""
         if it.get("messier"):
             extra = []
@@ -1112,6 +1118,8 @@ def main():
     out = root / "site"
 
     script_dir = Path(__file__).resolve().parent
+
+    # Messier catalog
     messier_xlsx = find_messier_xlsx(script_dir, root)
     messier_db = {}
     if messier_xlsx:
@@ -1128,8 +1136,14 @@ def main():
     if not NOVA_API_KEY:
         print("[INFO] NOVA_ASTROMETRY_API_KEY non défini -> pas d'astrométrie (plate solve)")
 
+    # SIMBAD cache
     cache = load_cache(root / CACHE_PATH)
 
+    # Astrometry persistent cache
+    ASTRO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    astro_cache = load_json(ASTRO_CACHE_INDEX)
+
+    # Rebuild site fresh
     if out.exists():
         shutil.rmtree(out)
     (out / "assets/css").mkdir(parents=True, exist_ok=True)
@@ -1152,6 +1166,7 @@ def main():
     items = []
     object_groups = {}
 
+    # Nova session
     nova_session = None
     if NOVA_API_KEY:
         try:
@@ -1161,6 +1176,7 @@ def main():
             print(f"[WARN] Login Nova impossible: {e}")
             nova_session = None
 
+    # Pass 1: build items
     for jpg_path in jpgs:
         processed += 1
         pct = (processed / total) * 100.0
@@ -1181,12 +1197,12 @@ def main():
         catalog = infer_catalog(object_name)
         obj_type = infer_object_type_basic(object_name)
 
-        # Copie image finale
+        # Copy image
         rel_img_name = f"{slugify(object_name)}-{jpg_path.name}"
         rel_img = Path("data/img") / rel_img_name
         shutil.copy2(jpg_path, out / rel_img)
 
-        # Thumbnail
+        # Thumbnail if exists
         thn_guess = jpg_path.with_name(jpg_path.stem + "_thn.jpg")
         rel_thn = rel_img
         if thn_guess.exists() and (not is_in_sub_folder(thn_guess)):
@@ -1194,14 +1210,14 @@ def main():
             rel_thn = Path("data/img") / rel_thn_name
             shutil.copy2(thn_guess, out / rel_thn)
 
-        # SIMBAD: ident du dossier
+        # SIMBAD: use folder name (not filename, not FITS OBJECT)
         simbad_ident = simbad_ident_from_dir(obs_dir)
         enrich = enrich_tags(simbad_ident, cache)
 
         tags_fr = uniq_preserve(enrich.get("tags_fr", []))
         tags_en = uniq_preserve(enrich.get("tags_en", []))
 
-        # Object type déduit des tags SIMBAD
+        # Improve object type from tags
         if "planetary nebula" in tags_en:
             obj_type = "Planetary Nebula"
         elif "globular cluster" in tags_en:
@@ -1219,7 +1235,7 @@ def main():
         elif "planet" in tags_en:
             obj_type = "Planet"
 
-        # --- NOUVEAU: enrichissement Messier depuis XLSX ---
+        # Messier enrichment from XLSX
         messier_id = normalize_messier_id(obs_dir.name) or normalize_messier_id(object_name)
         messier_info = messier_db.get(messier_id.upper()) if (messier_id and messier_db) else None
 
@@ -1242,18 +1258,15 @@ def main():
             messier_fields["distance_ly"] = messier_info.get("distance_ly")
             messier_fields["messier_type"] = messier_info.get("type") or ""
 
-            # si type Messier existe, on peut l'utiliser comme "objectType" si SIMBAD a laissé "Other"
             if obj_type in ("Other", "", None) and messier_fields["messier_type"]:
                 obj_type = messier_fields["messier_type"]
 
-            # rendre la recherche plus efficace
-            tags_fr = uniq_preserve(tags_fr + [messier_fields["messier_type"]] if messier_fields["messier_type"] else tags_fr)
-            tags_en = tags_en  # (tu peux ajouter une traduction EN plus tard si tu veux)
+            if messier_fields["messier_type"]:
+                tags_fr = uniq_preserve(tags_fr + [messier_fields["messier_type"]])
 
         keywords_fr = uniq_preserve([object_name, catalog, "Seestar S50", "astrophotographie"] + tags_fr)
         keywords_en = uniq_preserve([object_name, catalog, "Seestar S50", "astrophotography"] + tags_en)
 
-        # Ajoute aussi les champs Messier dans les keywords pour la recherche
         if messier_fields["messier"]:
             keywords_fr = uniq_preserve(keywords_fr + [messier_fields["messier"], messier_fields["ngc"], messier_fields["constellation"]])
             keywords_en = uniq_preserve(keywords_en + [messier_fields["messier"], messier_fields["ngc"], messier_fields["constellation"]])
@@ -1289,7 +1302,6 @@ def main():
             "keywords_fr": keywords_fr,
             "keywords_en": keywords_en,
 
-            # Messier extra
             "messier": messier_fields["messier"],
             "ngc": messier_fields["ngc"],
             "constellation": messier_fields["constellation"],
@@ -1318,11 +1330,11 @@ def main():
         object_groups.setdefault(object_name, []).append(item)
 
     save_cache(root / CACHE_PATH, cache)
-    print("\n✅ Tags + Messier: terminé (cache mis à jour).")
+    print("\n✅ Tags + Messier: terminé (cache SIMBAD mis à jour).")
 
     items.sort(key=lambda x: x.get("dateCreatedISO", ""), reverse=True)
 
-    # Pass 2: astrométrie (optionnelle)
+    # Pass 2: astrometry (optional) + persistent cache
     if nova_session:
         if ASTROMETRY_MODE == "all":
             to_solve = [it for it in items if it.get("_fitsPath")]
@@ -1350,8 +1362,31 @@ def main():
                     print(f"\n[WARN] Pas de FITS local pour {obj} -> astrométrie skip")
                     continue
 
-                wcs_fits = out / "data/solved" / f"{slugify(obj)}-{jpg_stem}-wcs.fits"
+                # ---------- Persistent cache check ----------
+                src_path = fits_path if fits_path.exists() else jpg_path
+                src_fp = file_fingerprint(src_path)
 
+                cache_key = f"{slugify(obj)}-{jpg_stem}"
+                cached = astro_cache.get(cache_key)
+
+                cached_png = ASTRO_CACHE_DIR / f"{cache_key}-astrometry.png"
+                cached_wcs = ASTRO_CACHE_DIR / f"{cache_key}-wcs.fits"
+
+                if cached and cached.get("src_fp") == src_fp and cached_png.exists() and cached_wcs.exists():
+                    astro_rel = Path("astrometry") / cached_png.name
+                    wcs_rel = Path("data/solved") / cached_wcs.name
+
+                    shutil.copy2(cached_png, out / astro_rel)
+                    shutil.copy2(cached_wcs, out / wcs_rel)
+
+                    it["astrometryUrl"] = astro_rel.as_posix()
+                    print(f"\n[CACHE] Astrométrie réutilisée pour {obj}: {cached_png.name}")
+                    continue
+                # -------------------------------------------
+
+                wcs_fits = out / "data/solved" / f"{cache_key}-wcs.fits"
+
+                # Run solve if we don't already have WCS for this run
                 if not wcs_fits.exists():
                     scale = estimate_scale_arcsec_per_pix(fits_path)
                     subid = nova_upload_fits(nova_session, fits_path, scale_arcsec_per_pix=scale)
@@ -1379,7 +1414,7 @@ def main():
                     print(f"\n[WARN] Aucun pixel image disponible (FITS+JPG) pour {obj}")
                     continue
 
-                astro_name = f"{slugify(obj)}-{jpg_stem}-astrometry.png"
+                astro_name = f"{cache_key}-astrometry.png"
                 astro_rel = Path("astrometry") / astro_name
 
                 ok_png = make_astrometry_png_from_image_and_wcs(
@@ -1391,6 +1426,18 @@ def main():
 
                 if ok_png:
                     it["astrometryUrl"] = astro_rel.as_posix()
+
+                    # ---------- Save to persistent cache ----------
+                    shutil.copy2(wcs_fits, cached_wcs)
+                    shutil.copy2(out / astro_rel, cached_png)
+                    astro_cache[cache_key] = {
+                        "src_fp": src_fp,
+                        "object": obj,
+                        "updated": datetime.now().isoformat(timespec="seconds")
+                    }
+                    save_json(ASTRO_CACHE_INDEX, astro_cache)
+                    # ---------------------------------------------
+
                 else:
                     print(f"\n[WARN] PNG astrométrie non généré: {obj}")
 
@@ -1401,7 +1448,7 @@ def main():
     else:
         print("[INFO] Astrométrie non exécutée (pas de session Nova).")
 
-    # Nettoyage champs internes
+    # Remove internal fields
     for it in items:
         it.pop("_fitsPath", None)
         it.pop("_jpgPath", None)
@@ -1429,7 +1476,7 @@ def main():
     (out / "assets/js/app.js").write_text(build_app_js(), encoding="utf-8")
     (out / "assets/css/styles.css").write_text(build_styles_css(), encoding="utf-8")
 
-    # Pages objets
+    # Object pages
     object_urls = []
     for obj_name, group_items in object_groups.items():
         group_items.sort(key=lambda x: x.get("dateCreatedISO", ""), reverse=True)
@@ -1468,9 +1515,11 @@ def main():
 
     print(f"✅ Galerie générée dans: {out}")
     print(f"📌 Cache SIMBAD: {root / CACHE_PATH}")
+    print(f"📌 Cache astrométrie: {ASTRO_CACHE_DIR} (index: {ASTRO_CACHE_INDEX})")
     if BASE_URL.startswith("https://example.com"):
         print("⚠️  Mets BASE_URL sur ton URL réelle si tu publies (sinon OG/sitemap ont une URL fictive).")
 
 
 if __name__ == "__main__":
     main()
+```
