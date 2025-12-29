@@ -5,9 +5,25 @@ Le script parcourt votre répertoire **MyWorks**, collecte les images **JPG fina
 
 ---
 
-## Nouveauté (vX.Y) — Correction SIMBAD (tags manquants)
-**SIMBAD utilise maintenant le nom du répertoire d’observation** (ex.: `M 27`, `Altair`) comme identifiant, plutôt que le nom du fichier ou `OBJECT` du FITS, afin d’éviter les suffixes du type `LP`, `IRCut`, etc.  
-Les dossiers terminant par **`_sub`** ou **`-sub`** sont exclus.
+## Nouveautés (vX.Y)
+
+### ✅ SIMBAD plus fiable
+- **SIMBAD utilise le nom du répertoire d’observation** (ex.: `M 27`, `Altair`) comme identifiant, plutôt que le nom de fichier ou `OBJECT` du FITS.
+- Exclusion systématique des dossiers finissant par **`_sub`** ou **`-sub`**.
+
+### ✅ Enrichissement Messier via fichier XLSX (nouveau)
+Si l’objet est de type **Messier** (`M1` ou `M 1`), le script lit un **catalogue Excel** placé à côté du script et ajoute automatiquement :
+- **Type** (ex.: nébuleuse planétaire, amas globulaire, galaxie…)
+- **Nom NGC/IC** (si présent)
+- **Constellation**
+- **Magnitude**
+- **Taille**
+- **Distance (al)**
+
+Le fichier attendu est : **`Objets Messiers..xlsx`**.
+
+> Note : certaines magnitudes dans l’Excel peuvent être interprétées comme dates (Excel).  
+> Le script corrige cela automatiquement (ex.: `2025-04-08` → `8.4`).
 
 ---
 
@@ -18,6 +34,7 @@ Les dossiers terminant par **`_sub`** ou **`-sub`** sont exclus.
 - [Prérequis](#prérequis)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Catalogue Messier (XLSX)](#catalogue-messier-xlsx)
 - [Utilisation](#utilisation)
 - [Règles de découverte des images](#règles-de-découverte-des-images)
 - [Tags automatiques (SIMBAD)](#tags-automatiques-simbad)
@@ -68,6 +85,7 @@ MyWorks/
     (optionnel) image_finale_thn.jpg
     Stacked_...fit / Stacked_...fits
   M 51_sub/      <- ignoré
+  M 51-sub/      <- ignoré
   IC 342/
     ...
 ```
@@ -92,10 +110,11 @@ python --version
 - `matplotlib`
 - `astropy`
 - `pillow`
+- `openpyxl` (**nouveau**, requis pour le XLSX Messier)
 
 Installer :
 ```powershell
-pip install requests numpy matplotlib astropy pillow
+pip install requests numpy matplotlib astropy pillow openpyxl
 ```
 
 ---
@@ -117,7 +136,7 @@ python -m venv .venv
 3) Installer les dépendances :
 ```powershell
 pip install -U pip
-pip install requests numpy matplotlib astropy pillow
+pip install requests numpy matplotlib astropy pillow openpyxl
 ```
 
 ---
@@ -163,6 +182,34 @@ Puis **rouvrez** PowerShell.
 
 ---
 
+## Catalogue Messier (XLSX)
+
+### Fichier attendu
+Placez le fichier suivant **dans le même dossier que le script** (ou dans le dossier courant) :
+
+- **`Objets Messiers..xlsx`**
+
+Le script tentera :
+1) `./Objets Messiers..xlsx` (à côté du script)  
+2) `MyWorks/Objets Messiers..xlsx` (dossier courant)  
+3) sinon, le premier `*.xlsx` contenant “Messier” dans le nom (fallback)
+
+### Ce qui est ajouté automatiquement (pour `M1` / `M 1`, etc.)
+- `messier` (ex. `M 27`)
+- `ngc` (ex. `NGC 6853`)
+- `constellation`
+- `magnitude`
+- `size`
+- `distance_ly` (distance en années-lumière)
+- `messier_type` (type texte du catalogue)
+
+Ces champs sont :
+- intégrés dans `data/images.json`
+- utilisables par la recherche et les filtres
+- affichés sur la page objet et/ou dans la carte (selon la version)
+
+---
+
 ## Utilisation
 
 Depuis le dossier MyWorks :
@@ -174,8 +221,9 @@ python gnu_astro_galery.py
 Le script :
 1. détecte toutes les images JPG finales (hors `_sub`/`-sub`, hors `_thn.jpg`)
 2. enrichit tags/catalogue/type d’objet
-3. génère la galerie dans `.\site`
-4. (optionnel) lance plate-solve et produit `site\astrometry\*.png`
+3. enrichit les objets Messier avec le fichier XLSX (si présent)
+4. génère la galerie dans `.\site`
+5. (optionnel) lance plate-solve et produit `site\astrometry\*.png`
 
 Ouvrir la galerie :
 - double-cliquez `site\index.html`
@@ -188,7 +236,7 @@ Le script **inclut** :
 - tous les fichiers `*.jpg` dans les dossiers d’objets
 
 Le script **exclut** :
-- tout ce qui se trouve dans un dossier finissant par `_sub` ou `-sub`
+- tout ce qui se trouve dans un dossier finissant par `_sub` **ou** `-sub`
 - tout fichier finissant par `_thn.jpg` (miniatures Seestar)
 
 ---
@@ -244,16 +292,20 @@ Les données `images.json` sont **inlinées** dans `index.html` via :
 - Vérifiez que l’objet a bien un dossier nommé proprement (`M 27`, `Altair`, etc.)
 - Vérifiez le cache : supprimez `cache/object_info.json` et relancez si besoin
 
+### “Le fichier Messier XLSX n’est pas lu”
+- Vérifiez le nom exact : `Objets Messiers..xlsx`
+- Assurez-vous qu’il est à côté du script ou dans `MyWorks`
+- Vérifiez la dépendance :
+```powershell
+pip show openpyxl
+```
+
 ### “Login Nova impossible / réponse non-JSON”
 - Vérifiez `NOVA_ASTROMETRY_API_KEY`
 - Relancez dans PowerShell avec :
 ```powershell
 echo $env:NOVA_ASTROMETRY_API_KEY
 ```
-
-### “PNG astrométrie non généré”
-- Si le FITS ne contient pas une image 2D, le script bascule sur le JPG
-- Consultez les warnings dans la console
 
 ---
 
@@ -291,5 +343,7 @@ Ajoutez un fichier `LICENSE`.
 
 - Bootstrap 5 (CDN)
 - AstroPy / FITS / WCS
+- Pillow
+- OpenPyXL
 - SIMBAD (CDS) pour l’enrichissement des objets
 - Astrometry.net (Nova) pour le plate-solve

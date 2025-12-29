@@ -6,7 +6,7 @@ import re
 import json
 import time
 import shutil
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -22,6 +22,7 @@ from astropy.wcs import WCS
 from astropy.visualization import ZScaleInterval, ImageNormalize
 
 from PIL import Image
+from openpyxl import load_workbook
 
 
 # -------------------------
@@ -37,6 +38,9 @@ SIMBAD_TAP = "https://simbad.cds.unistra.fr/simbad/sim-tap/sync"
 
 ASTROMETRY_MODE = "latest_per_object"  # "latest_per_object" or "all"
 CACHE_PATH = Path("cache") / "object_info.json"
+
+# Catalogue Messier (XLSX) placé au même endroit que le script
+MESSIER_XLSX_NAME = "Objets Messiers..xlsx"
 
 BASE_URL = "https://example.com/seestar"
 SITE_TITLE = "Galerie Seestar S50"
@@ -55,7 +59,6 @@ LOCAL_OBJECT_DB = {
     "IC 342": ("galaxie spirale", "spiral galaxy",
                ["galaxie", "galaxie spirale"],
                ["galaxy", "spiral galaxy"]),
-    # Exemples
     "JUPITER": ("planète", "planet", ["planète"], ["planet"]),
     "DENEBOLA": ("étoile", "star", ["étoile"], ["star"]),
 }
@@ -144,10 +147,6 @@ def is_sub_dirname(name: str) -> bool:
 
 
 def simbad_ident_from_dir(obs_dir: Path) -> str:
-    """
-    Retourne un ident SIMBAD fiable basé sur le nom du dossier.
-    Exclut automatiquement les dossiers *_sub / *-sub.
-    """
     name = obs_dir.name.strip()
     if is_sub_dirname(name) and obs_dir.parent:
         name = obs_dir.parent.name.strip()
@@ -169,6 +168,179 @@ def load_cache(cache_path: Path) -> dict:
 def save_cache(cache_path: Path, cache: dict):
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ------------------------------------------------------------
+# Catalogue Messier (XLSX)
+# ------------------------------------------------------------
+def normalize_messier_id(text: str) -> str | None:
+    """
+    Accepte: 'M1', 'M 1', 'm 001' -> 'M 1'
+    """
+    s = (text or "").strip().upper()
+    m = re.search(r"\bM\s*0*([0-9]{1,3})\b", s)
+    if not m:
+        return None
+    return f"M {int(m.group(1))}"
+
+
+def parse_mag_cell(val) -> float | None:
+    """
+    Dans ton fichier, la magnitude est parfois interprétée comme une date Excel.
+    On reconstruit alors la magnitude comme 'jour.mois' -> ex: 2025-04-08 => 8.4
+    """
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        try:
+            return float(val)
+        except Exception:
+            return None
+    if isinstance(val, (datetime, date)):
+        # magnitude = day.month  -> 8.4, 6.5, 4.1...
+        d = val.day
+        m = val.month
+        try:
+            return round(d + (m / 10.0), 1)
+        except Exception:
+            return None
+    # string
+    s = str(val).strip().replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        # cas "8.4" ou "8/4"
+        s2 = re.sub(r"[^\d./]", "", s)
+        if "/" in s2:
+            parts = s2.split("/")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                # 8/4 -> 8.4
+                return round(int(parts[0]) + int(parts[1]) / 10.0, 1)
+        return None
+
+
+def extract_ngc_ic_from_name(name: str) -> str:
+    """
+    Extrait 'NGC 1952' ou 'IC 434' depuis 'NGC 1952 Nébuleuse du Crabe'
+    """
+    if not name:
+        return ""
+    m = re.search(r"\b(NGC|IC)\s*([0-9]{1,5})\b", str(name).upper())
+    if not m:
+        return ""
+    return f"{m.group(1)} {int(m.group(2))}"
+
+
+def load_messier_catalog(xlsx_path: Path) -> dict:
+    """
+    Retourne dict:
+      key 'M 1' -> {
+        'm': 1,
+        'ngc_name': 'NGC 1952 Nébuleuse du Crabe',
+        'ngc_id': 'NGC 1952',
+        'type': 'Reste de supernova',
+        'constellation': 'Taureau',
+        'ra': '5h 34.5m',
+        'dec': "+22° 1.0'",
+        'mag': 8.4,
+        'size': '6.0x4.0',
+        'distance_ly': 6300
+      }
+    """
+    if not xlsx_path.exists():
+        return {}
+
+    wb = load_workbook(xlsx_path, data_only=True)
+    ws = wb[wb.sheetnames[0]]
+
+    # lecture header
+    headers = {}
+    for c in range(1, 40):
+        v = ws.cell(1, c).value
+        if v is None:
+            continue
+        headers[str(v).strip()] = c
+
+    def col(*names):
+        for n in names:
+            if n in headers:
+                return headers[n]
+        return None
+
+    c_num = col("N°", "No", "N")
+    c_name = col("Nom / NGC", "Nom/NGC", "Nom")
+    c_type = col("Type")
+    c_cons = col("Constellation")
+    c_ra   = col("AD (h m)", "AD", "RA")
+    c_dec  = col("Déc (° ')", "Dec", "DEC")
+    c_mag  = col("Mag", "Magnitude")
+    c_size = col("Taille", "Size")
+    c_dist = col("Dist. (al)", "Dist", "Distance")
+
+    if not c_num:
+        return {}
+
+    out = {}
+    for r in range(2, ws.max_row + 1):
+        n = ws.cell(r, c_num).value
+        if n is None:
+            continue
+        try:
+            n_int = int(float(n))
+        except Exception:
+            continue
+
+        key = f"M {n_int}"
+
+        name = ws.cell(r, c_name).value if c_name else ""
+        otype = ws.cell(r, c_type).value if c_type else ""
+        cons = ws.cell(r, c_cons).value if c_cons else ""
+        ra = ws.cell(r, c_ra).value if c_ra else ""
+        dec = ws.cell(r, c_dec).value if c_dec else ""
+        mag_val = ws.cell(r, c_mag).value if c_mag else None
+        size = ws.cell(r, c_size).value if c_size else ""
+        dist = ws.cell(r, c_dist).value if c_dist else None
+
+        mag = parse_mag_cell(mag_val)
+        ngc_id = extract_ngc_ic_from_name(str(name) if name else "")
+
+        try:
+            dist_ly = float(dist) if dist is not None else None
+            if dist_ly is not None:
+                dist_ly = int(round(dist_ly))
+        except Exception:
+            dist_ly = None
+
+        out[key.upper()] = {
+            "m": n_int,
+            "ngc_name": safe_text(name, ""),
+            "ngc_id": safe_text(ngc_id, ""),
+            "type": safe_text(otype, ""),
+            "constellation": safe_text(cons, ""),
+            "ra_hm": safe_text(ra, ""),
+            "dec_dm": safe_text(dec, ""),
+            "mag": mag,
+            "size": safe_text(size, ""),
+            "distance_ly": dist_ly,
+        }
+    return out
+
+
+def find_messier_xlsx(script_dir: Path, cwd: Path) -> Path | None:
+    # Priorité : même dossier que le script
+    p1 = script_dir / MESSIER_XLSX_NAME
+    if p1.exists():
+        return p1
+    # Sinon : dossier courant
+    p2 = cwd / MESSIER_XLSX_NAME
+    if p2.exists():
+        return p2
+    # Sinon : chercher un xlsx contenant "Messier"
+    for base in (script_dir, cwd):
+        for p in base.glob("*.xlsx"):
+            if "messier" in p.name.lower():
+                return p
+    return None
 
 
 # ------------------------------------------------------------
@@ -393,7 +565,8 @@ def read_image_from_jpg(jpg_path: Path) -> np.ndarray | None:
 # ------------------------------------------------------------
 def is_in_sub_folder(path: Path) -> bool:
     for part in path.parts:
-        if str(part).lower().endswith("_sub") or str(part).lower().endswith("-sub"):
+        p = str(part).lower()
+        if p.endswith("_sub") or p.endswith("-sub"):
             return True
     return False
 
@@ -431,7 +604,7 @@ def find_final_jpgs(root_dir: Path):
 
 
 # ------------------------------------------------------------
-# Nova helpers
+# Nova helpers (inchangé)
 # ------------------------------------------------------------
 def _json_or_raise(r: requests.Response, context: str) -> dict:
     r.raise_for_status()
@@ -574,7 +747,6 @@ def make_astrometry_png_from_image_and_wcs(
             h["NAXIS2"] = ny
 
         wcs = WCS(h, naxis=2)
-
         norm = ImageNormalize(image_array_2d, interval=ZScaleInterval())
 
         fig = plt.figure(figsize=(6, 9), dpi=160)
@@ -624,7 +796,8 @@ def og_meta(title: str, description: str, image_url_abs: str, url_abs: str) -> s
 
 def image_jsonld(item: dict, page_url: str) -> dict:
     add_props = []
-    for k in ["ra", "dec", "exptime", "filter", "telescope", "instrument"]:
+    for k in ["ra", "dec", "exptime", "filter", "telescope", "instrument",
+              "messier", "ngc", "constellation", "magnitude", "size", "distance_ly"]:
         v = item.get(k)
         if v not in (None, "", 0, "0"):
             add_props.append({"@type": "PropertyValue", "name": k.upper(), "value": str(v)})
@@ -728,6 +901,18 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
         if it.get("astrometryUrl"):
             astro_link = f"""<div class="mt-2 small"><a href="../{html_escape(it['astrometryUrl'])}" target="_blank" rel="noopener">Astrométrie</a></div>"""
 
+        # ligne info Messier si dispo
+        messier_line = ""
+        if it.get("messier"):
+            extra = []
+            if it.get("ngc"): extra.append(f"NGC/IC: {it['ngc']}")
+            if it.get("constellation"): extra.append(f"Constellation: {it['constellation']}")
+            if it.get("magnitude") is not None: extra.append(f"Mag: {it['magnitude']}")
+            if it.get("size"): extra.append(f"Taille: {it['size']}")
+            if it.get("distance_ly") is not None: extra.append(f"Dist.(al): {it['distance_ly']}")
+            if extra:
+                messier_line = f"""<div class="small text-muted mt-2">{html_escape(" • ".join(extra))}</div>"""
+
         cards.append(f"""
         <div class="col-md-4">
           <div class="card h-100 shadow-sm">
@@ -743,6 +928,7 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
                 <span class="badge text-bg-secondary">{html_escape(str(it.get('filter','')))}</span>
               </div>
               <div class="small text-muted mt-2">{html_escape(tags_line)}</div>
+              {messier_line}
               {astro_link}
             </div>
           </div>
@@ -804,6 +990,8 @@ function matches(item, q) {
   const parts = [
     item.name, item.description, item.objectName, item.catalog, item.objectType,
     item.filter,
+    item.messier || "", item.ngc || "", item.constellation || "",
+    String(item.magnitude ?? ""), String(item.distance_ly ?? ""), item.size || "",
     ...(item.tags_fr || []), ...(item.tags_en || []),
     ...(item.keywords_fr || []), ...(item.keywords_en || []),
   ];
@@ -820,6 +1008,17 @@ function buildCard(item) {
 
   const tags = [...new Set([...(item.tags_fr||[]), ...(item.tags_en||[])])].slice(0,6).join(', ');
 
+  let messierLine = '';
+  if (item.messier) {
+    const extra = [];
+    if (item.ngc) extra.push(`NGC/IC: ${item.ngc}`);
+    if (item.constellation) extra.push(`Const: ${item.constellation}`);
+    if (item.magnitude != null) extra.push(`Mag: ${item.magnitude}`);
+    if (item.size) extra.push(`Taille: ${item.size}`);
+    if (item.distance_ly != null) extra.push(`Dist(al): ${item.distance_ly}`);
+    if (extra.length) messierLine = `<div class="small text-muted mt-2">${extra.join(' • ')}</div>`;
+  }
+
   col.innerHTML = `
     <div class="card h-100 shadow-sm">
       <a href="${item.contentUrl}" target="_blank" rel="noopener">
@@ -834,6 +1033,7 @@ function buildCard(item) {
           <span class="badge text-bg-secondary">${item.filter || ''}</span>
         </div>
         <div class="small text-muted mt-2">${tags}</div>
+        ${messierLine}
         ${objLink}
         ${astroLink}
       </div>
@@ -911,6 +1111,19 @@ def main():
     root = Path(os.getcwd())
     out = root / "site"
 
+    script_dir = Path(__file__).resolve().parent
+    messier_xlsx = find_messier_xlsx(script_dir, root)
+    messier_db = {}
+    if messier_xlsx:
+        try:
+            messier_db = load_messier_catalog(messier_xlsx)
+            print(f"[INFO] Catalogue Messier chargé: {messier_xlsx} ({len(messier_db)} entrées)")
+        except Exception as e:
+            print(f"[WARN] Lecture catalogue Messier impossible: {messier_xlsx} ({e})")
+            messier_db = {}
+    else:
+        print(f"[INFO] Catalogue Messier introuvable (attendu: {MESSIER_XLSX_NAME} près du script).")
+
     NOVA_API_KEY = os.environ.get("NOVA_ASTROMETRY_API_KEY", "").strip()
     if not NOVA_API_KEY:
         print("[INFO] NOVA_ASTROMETRY_API_KEY non défini -> pas d'astrométrie (plate solve)")
@@ -948,7 +1161,6 @@ def main():
             print(f"[WARN] Login Nova impossible: {e}")
             nova_session = None
 
-    # Pass 1: items + tags
     for jpg_path in jpgs:
         processed += 1
         pct = (processed / total) * 100.0
@@ -958,7 +1170,6 @@ def main():
         fits_path = find_stacked_fits_in_dir(obs_dir)
         meta = extract_fits_metadata(fits_path) if fits_path else {}
 
-        # Nom affiché (UI) : FITS OBJECT si dispo, sinon nom du dossier
         object_name = meta.get("object") or obs_dir.name
         if object_name.strip().lower() in ("unknown object", "unknown", ""):
             object_name = obs_dir.name
@@ -975,7 +1186,7 @@ def main():
         rel_img = Path("data/img") / rel_img_name
         shutil.copy2(jpg_path, out / rel_img)
 
-        # Thumbnail (si présent) : copie; sinon fallback vers image
+        # Thumbnail
         thn_guess = jpg_path.with_name(jpg_path.stem + "_thn.jpg")
         rel_thn = rel_img
         if thn_guess.exists() and (not is_in_sub_folder(thn_guess)):
@@ -983,7 +1194,7 @@ def main():
             rel_thn = Path("data/img") / rel_thn_name
             shutil.copy2(thn_guess, out / rel_thn)
 
-        # ✅ CHANGEMENT: SIMBAD utilise le nom du répertoire (stable) au lieu de OBJECT/filename
+        # SIMBAD: ident du dossier
         simbad_ident = simbad_ident_from_dir(obs_dir)
         enrich = enrich_tags(simbad_ident, cache)
 
@@ -1008,8 +1219,44 @@ def main():
         elif "planet" in tags_en:
             obj_type = "Planet"
 
+        # --- NOUVEAU: enrichissement Messier depuis XLSX ---
+        messier_id = normalize_messier_id(obs_dir.name) or normalize_messier_id(object_name)
+        messier_info = messier_db.get(messier_id.upper()) if (messier_id and messier_db) else None
+
+        messier_fields = {
+            "messier": "",
+            "ngc": "",
+            "constellation": "",
+            "magnitude": None,
+            "size": "",
+            "distance_ly": None,
+            "messier_type": "",
+        }
+
+        if messier_id and messier_info:
+            messier_fields["messier"] = messier_id
+            messier_fields["ngc"] = messier_info.get("ngc_id") or ""
+            messier_fields["constellation"] = messier_info.get("constellation") or ""
+            messier_fields["magnitude"] = messier_info.get("mag")
+            messier_fields["size"] = messier_info.get("size") or ""
+            messier_fields["distance_ly"] = messier_info.get("distance_ly")
+            messier_fields["messier_type"] = messier_info.get("type") or ""
+
+            # si type Messier existe, on peut l'utiliser comme "objectType" si SIMBAD a laissé "Other"
+            if obj_type in ("Other", "", None) and messier_fields["messier_type"]:
+                obj_type = messier_fields["messier_type"]
+
+            # rendre la recherche plus efficace
+            tags_fr = uniq_preserve(tags_fr + [messier_fields["messier_type"]] if messier_fields["messier_type"] else tags_fr)
+            tags_en = tags_en  # (tu peux ajouter une traduction EN plus tard si tu veux)
+
         keywords_fr = uniq_preserve([object_name, catalog, "Seestar S50", "astrophotographie"] + tags_fr)
         keywords_en = uniq_preserve([object_name, catalog, "Seestar S50", "astrophotography"] + tags_en)
+
+        # Ajoute aussi les champs Messier dans les keywords pour la recherche
+        if messier_fields["messier"]:
+            keywords_fr = uniq_preserve(keywords_fr + [messier_fields["messier"], messier_fields["ngc"], messier_fields["constellation"]])
+            keywords_en = uniq_preserve(keywords_en + [messier_fields["messier"], messier_fields["ngc"], messier_fields["constellation"]])
 
         tags_short_fr = ", ".join(tags_fr[:3]) if tags_fr else ""
         tags_short_en = ", ".join(tags_en[:3]) if tags_en else ""
@@ -1042,6 +1289,15 @@ def main():
             "keywords_fr": keywords_fr,
             "keywords_en": keywords_en,
 
+            # Messier extra
+            "messier": messier_fields["messier"],
+            "ngc": messier_fields["ngc"],
+            "constellation": messier_fields["constellation"],
+            "magnitude": messier_fields["magnitude"],
+            "size": messier_fields["size"],
+            "distance_ly": messier_fields["distance_ly"],
+            "messier_type": messier_fields["messier_type"],
+
             "description": desc,
             "alt": alt,
 
@@ -1062,7 +1318,7 @@ def main():
         object_groups.setdefault(object_name, []).append(item)
 
     save_cache(root / CACHE_PATH, cache)
-    print("\n✅ Tags: terminé (cache mis à jour).")
+    print("\n✅ Tags + Messier: terminé (cache mis à jour).")
 
     items.sort(key=lambda x: x.get("dateCreatedISO", ""), reverse=True)
 
