@@ -6,6 +6,7 @@ Le projet vise une approche à la fois **esthétique**, **scientifique** et **do
 - la **page objet** comme unité centrale,
 - l’enrichissement automatique des données astronomiques,
 - la **traçabilité** (métadonnées, catalogues, astrométrie),
+- l’ajout de **cartes stellaires de type atlas** pour le contexte céleste,
 - et une **navigation claire** adaptée à la diffusion publique.
 
 ---
@@ -47,7 +48,8 @@ Le projet vise une approche à la fois **esthétique**, **scientifique** et **do
   - auteur et licence,
   - tableau des métadonnées de l’image,
   - tableau des caractéristiques astronomiques,
-  - image astrométrique cliquable
+  - image astrométrique cliquable,
+  - **carte stellaire de type atlas**
 - Enrichissement automatique via :
   - **SIMBAD**
   - **catalogue Messier (XLSX local)**
@@ -55,6 +57,7 @@ Le projet vise une approche à la fois **esthétique**, **scientifique** et **do
 - Cache persistant pour :
   - SIMBAD
   - astrométrie (WCS + PNG)
+  - cartes stellaires (atlas)
 - SEO :
   - sitemap.xml
   - robots.txt
@@ -69,13 +72,14 @@ La galerie adopte une structure claire et cohérente :
 | Élément | Rôle |
 |------|------|
 | Page d’accueil | Découverte visuelle, exploration, filtrage |
-| Page objet | Analyse scientifique, métadonnées, astrométrie |
+| Page objet | Analyse scientifique, métadonnées, astrométrie, carte |
 | Image brute | Consultation ou téléchargement ponctuel |
 
 ### Navigation clé
 - ✅ clic sur l’image de la page d’accueil → **page objet**
 - ❌ plus de liens redondants sous les cartes
 - 🔭 astrométrie accessible **uniquement sur la page objet**
+- 🗺️ carte stellaire accessible **uniquement sur la page objet**
 - 📷 image HD accessible depuis la page objet
 
 ---
@@ -108,7 +112,7 @@ MyWorks/
 
 ### Dépendances Python
 ```
-pip install requests numpy matplotlib astropy pillow openpyxl
+pip install requests numpy matplotlib astropy pillow openpyxl astroquery skyfield
 ```
 
 ---
@@ -158,7 +162,7 @@ Ce fichier doit contenir (au minimum) :
 - Taille
 - Distance (années-lumière)
 
-Les données sont ajoutées automatiquement aux pages objet.
+Les données sont ajoutées automatiquement aux pages objet et complètent SIMBAD.
 
 ---
 
@@ -193,6 +197,12 @@ Chaque objet possède une page dédiée :
 - Section **Astrométrie** :
   - aperçu réduit,
   - clic pour agrandir
+- Section **Carte stellaire (Atlas)** :
+  - grille RA / Dec,
+  - étoiles (catalogue Hipparcos),
+  - lignes de constellations (données Stellarium),
+  - cercle représentant le champ du Seestar (~30′),
+  - carte cliquable pour agrandissement
 
 ---
 
@@ -220,13 +230,15 @@ Les résultats sont mis en cache dans :
 
 ```
 cache/astrometry/
+cache/starcharts/
 ```
 
 - WCS FITS
 - PNG astrométrique
+- cartes atlas
 - index JSON
 
-Le cache évite les re-soumissions inutiles.
+Le cache évite les re-soumissions et régénérations inutiles.
 
 ---
 
@@ -295,6 +307,8 @@ Les **images** sont publiées sous :
 - AstroPy
 - SIMBAD (CDS)
 - astrometry.net
+- Stellarium skycultures
+- Skyfield / Hipparcos
 - Bootstrap 5
 - Pillow
 - OpenPyXL

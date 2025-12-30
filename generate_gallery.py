@@ -21,6 +21,23 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.visualization import ZScaleInterval, ImageNormalize
 
+# Optional (carte atlas) - Open Source, rendu local (Hipparcos + lignes de constellations Stellarium)
+# - nécessite une connexion Internet seulement au *premier* lancement pour télécharger:
+#   1) le catalogue Hipparcos (Skyfield cache) et 2) le fichier constellationship.fab (Stellarium)
+try:
+    from skyfield.api import load as sf_load
+    from skyfield.data import hipparcos as sf_hipparcos
+    from astropy.coordinates import SkyCoord, SkyOffsetFrame
+    import astropy.units as u
+    HAS_ATLAS = True
+except Exception:
+    HAS_ATLAS = False
+
+# Réglages carte atlas (finder chart)
+ATLAS_FOV_ARCMIN = float(os.environ.get("GNU_ASTRO_GALERY_ATLAS_FOV_ARCMIN", "240"))  # champ total en arcmin (ex: 240 = 4°)
+ATLAS_MAG_LIMIT = float(os.environ.get("GNU_ASTRO_GALERY_ATLAS_MAG_LIMIT", "10"))    # limite de magnitude (plus grand = plus d'étoiles)
+
+
 from PIL import Image
 from openpyxl import load_workbook
 
@@ -45,6 +62,16 @@ MESSIER_XLSX_NAME = "Objets Messiers..xlsx"
 # Cache astrométrie (persistant, hors de /site)
 ASTRO_CACHE_DIR = Path("cache") / "astrometry"
 ASTRO_CACHE_INDEX = ASTRO_CACHE_DIR / "index.json"
+STAR_CACHE_DIR = Path("cache") / "starcharts"
+STAR_CACHE_INDEX = STAR_CACHE_DIR / "index.json"
+
+# Données (Stellarium) pour dessiner les lignes de constellations (carte atlas)
+STELLARIUM_DATA_DIR = Path("data") / "stellarium"
+# Depuis 2025+, Stellarium utilise des skycultures au format JSON (index.json) plutôt que constellationship.fab.
+# On récupère donc les lignes de constellations depuis le dépôt open-source stellarium-skycultures.
+CONSTELLATION_INDEX_JSON = STELLARIUM_DATA_DIR / "western_index.json"
+CONSTELLATION_INDEX_URL = "https://raw.githubusercontent.com/Stellarium/stellarium-skycultures/master/western/index.json"
+
 
 BASE_URL = "https://example.com/seestar"
 SITE_TITLE = "Galerie Seestar S50"
@@ -411,9 +438,7 @@ def _simbad_query_basic(ident: str) -> dict | None:
     """
     r = requests.post(
         SIMBAD_TAP,
-        data={"request": "doQuery", "lang": "adql", "format": "json", "query": adql},
-        timeout=60
-    )
+        data={"request": "doQuery", "lang": "adql", "format": "json", "query": adql})
     r.raise_for_status()
     data = r.json()
     rows = data.get("data", [])
@@ -632,9 +657,7 @@ def nova_login(api_key: str) -> str:
     r = requests.post(
         ASTRO_NOVA_API + "login",
         data={"request-json": json.dumps(payload)},
-        headers={"Accept": "application/json"},
-        timeout=60
-    )
+        headers={"Accept": "application/json"})
     data = _json_or_raise(r, "Login Nova échoué")
     if data.get("status") != "success":
         raise RuntimeError(f"Login Nova échoué: {data}")
@@ -661,9 +684,7 @@ def nova_upload_fits(session: str, fits_path: Path, scale_arcsec_per_pix=None):
             ASTRO_NOVA_API + "upload",
             data={"request-json": json.dumps(upload_kwargs)},
             files=files,
-            headers={"Accept": "application/json"},
-            timeout=300
-        )
+            headers={"Accept": "application/json"})
         data = _json_or_raise(r, "Upload Nova échoué")
         if data.get("status") != "success":
             raise RuntimeError(f"Upload Nova échoué: {data}")
@@ -675,7 +696,7 @@ def nova_upload_fits(session: str, fits_path: Path, scale_arcsec_per_pix=None):
 def nova_poll_submission(subid: int, wait_s: int = 5, timeout_s: int = 600):
     t0 = time.time()
     while True:
-        r = requests.get(ASTRO_NOVA_API + f"submissions/{subid}", timeout=60)
+        r = requests.get(ASTRO_NOVA_API + f"submissions/{subid}")
         data = _json_or_raise(r, f"Submission Nova échouée (subid={subid})")
         jobs = data.get("jobs") or []
         job_ids = [j for j in jobs if isinstance(j, int)]
@@ -689,7 +710,7 @@ def nova_poll_submission(subid: int, wait_s: int = 5, timeout_s: int = 600):
 def nova_poll_job_solved(jobid: int, wait_s: int = 5, timeout_s: int = 900):
     t0 = time.time()
     while True:
-        r = requests.get(ASTRO_NOVA_API + f"jobs/{jobid}", timeout=60)
+        r = requests.get(ASTRO_NOVA_API + f"jobs/{jobid}")
         data = _json_or_raise(r, f"Job Nova échoué (jobid={jobid})")
         st = data.get("status")
         if st == "success":
@@ -719,7 +740,7 @@ def download_binary(url: str, timeout: int = 300) -> tuple[bytes, str]:
 def nova_download_wcs_header_only(jobid: int, out_fits_path: Path) -> bool:
     out_fits_path.parent.mkdir(parents=True, exist_ok=True)
     url = ASTRO_NOVA_SITE + f"wcs_file/{jobid}"
-    b, ct = download_binary(url, timeout=300)
+    b, ct = download_binary(url)
     if not looks_like_fits_bytes(b):
         snippet = b[:300].decode("utf-8", errors="ignore")
         print(f"\n[WARN] wcs_file non-FITS jobid={jobid} (Content-Type={ct}). Début: {snippet!r}")
@@ -788,21 +809,257 @@ def make_astrometry_png_from_image_and_wcs(
 
 
 # ------------------------------------------------------------
-# SEO meta + JSON-LD
+# STAR CHART (Finder chart) + cache persistant
 # ------------------------------------------------------------
-def og_meta(title: str, description: str, image_url_abs: str, url_abs: str) -> str:
-    return f"""
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="{html_escape(title)}">
-  <meta property="og:description" content="{html_escape(description)}">
-  <meta property="og:image" content="{html_escape(image_url_abs)}">
-  <meta property="og:url" content="{html_escape(url_abs)}">
+def load_star_cache() -> dict:
+    return load_json(STAR_CACHE_INDEX)
 
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{html_escape(title)}">
-  <meta name="twitter:description" content="{html_escape(description)}">
-  <meta name="twitter:image" content="{html_escape(image_url_abs)}">
-"""
+def save_star_cache(cache: dict):
+    save_json(STAR_CACHE_INDEX, cache)
+
+def wcs_center_from_header(h: fits.Header) -> tuple[float | None, float | None]:
+    try:
+        ra = h.get("CRVAL1", None)
+        dec = h.get("CRVAL2", None)
+        ra = float(ra) if ra is not None else None
+        dec = float(dec) if dec is not None else None
+        return ra, dec
+    except Exception:
+        return None, None
+
+def _ensure_constellation_index_json() -> bool:
+    """
+    Assure la présence du fichier 'western/index.json' (format skyculture JSON).
+    Source: dépôt open-source Stellarium/stellarium-skycultures.
+    Cache local: {STELLARIUM_DATA_DIR}
+    Sortie: {CONSTELLATION_INDEX_JSON}
+    """
+    try:
+        if CONSTELLATION_INDEX_JSON.exists() and CONSTELLATION_INDEX_JSON.stat().st_size > 1024:
+            return True
+
+        STELLARIUM_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+        import requests
+        r = requests.get(CONSTELLATION_INDEX_URL, timeout=60)
+        r.raise_for_status()
+        # L'index est du JSON
+        data = r.content
+        if not data or len(data) < 1024:
+            raise IOError("index.json trop petit / invalide.")
+        CONSTELLATION_INDEX_JSON.write_bytes(data)
+        return True
+
+    except Exception as e:
+        print(f"[WARN] Carte atlas: téléchargement index.json (constellations) impossible: {e}")
+        return False
+
+
+_HIP_DF = None
+
+_CONSTELLATION_LINES = None
+
+
+def _load_hipparcos_df():
+    """Charge le dataframe Hipparcos via Skyfield (cache disque + cache mémoire)."""
+    global _HIP_DF
+    if _HIP_DF is not None:
+        return _HIP_DF
+    try:
+        # Skyfield gère le cache disque automatiquement (dans son répertoire de cache)
+        with sf_load.open(sf_hipparcos.URL) as f:
+            df = sf_hipparcos.load_dataframe(f)
+        # df index = HIP
+        _HIP_DF = df
+        return df
+    except Exception as e:
+        print(f"[WARN] Carte atlas: chargement Hipparcos impossible: {e}")
+        return None
+
+
+def _load_constellation_lines():
+    """
+    Charge les lignes de constellations depuis 'western/index.json' (Stellarium skyculture JSON).
+
+    Retour: list[tuple[str, list[tuple[int,int]]]]
+      - str: abréviation IAU (ex: 'Aql') si présente, sinon identifiant de constellation
+      - segments: liste de paires (HIP_a, HIP_b)
+    """
+    global _CONSTELLATION_LINES
+    if _CONSTELLATION_LINES is not None:
+        return _CONSTELLATION_LINES
+
+    if not _ensure_constellation_index_json():
+        _CONSTELLATION_LINES = []
+        return _CONSTELLATION_LINES
+
+    import json
+
+    try:
+        data = json.loads(CONSTELLATION_INDEX_JSON.read_text(encoding="utf-8", errors="ignore"))
+        consts = data.get("constellations", [])
+        out = []
+        for c in consts:
+            label = c.get("iau") or c.get("id") or "CON"
+            segs = []
+            for path in c.get("lines", []) or []:
+                # path: [hip, hip, hip] ou ["thin"/"bold", hip, hip, ...]
+                if not path:
+                    continue
+                if isinstance(path[0], str):
+                    stars = path[1:]
+                else:
+                    stars = path
+                # segments successifs
+                for a, b in zip(stars, stars[1:]):
+                    try:
+                        ia = int(a); ib = int(b)
+                        segs.append((ia, ib))
+                    except Exception:
+                        continue
+            if segs:
+                out.append((label, segs))
+
+        _CONSTELLATION_LINES = out
+        return _CONSTELLATION_LINES
+
+    except Exception as e:
+        print(f"[WARN] Carte atlas: lecture/parsing index.json impossible: {e}")
+        _CONSTELLATION_LINES = []
+        return _CONSTELLATION_LINES
+
+
+def make_finder_chart_png(ra_deg: float, dec_deg: float, out_png: Path, fov_arcmin: float | None = None, inner_fov_arcmin: float = 30.0, title: str = "") -> bool:
+    """
+    Génère une carte 'atlas' (grille RA/Dec, étoiles, lignes de constellations) centrée sur (RA,DEC).
+    - rendu local open source (matplotlib + astropy + skyfield)
+    - nécessite une connexion Internet seulement au *premier* lancement (cache Skyfield + Stellarium)
+    """
+    if not HAS_ATLAS:
+        print("[WARN] Carte atlas: dépendances manquantes (pip install skyfield)")
+        return False
+
+    df = _load_hipparcos_df()
+    if df is None:
+        return False
+
+    cons = _load_constellation_lines()
+
+    try:
+        center = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
+        frame = SkyOffsetFrame(origin=center)
+        if fov_arcmin is None:
+            fov_arcmin = ATLAS_FOV_ARCMIN
+        radius_deg = (fov_arcmin / 60.0) / 2.0
+        margin_deg = radius_deg * 1.35
+
+        # Pré-sélection rapide par boîte (sur la sphère c'est approximatif mais OK pour réduire)
+        ra = df["ra_degrees"].to_numpy()
+        dec = df["dec_degrees"].to_numpy()
+        mag = df["magnitude"].to_numpy()
+
+        # distance angulaire précise avec astropy (sur subset)
+        stars = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
+        sep = stars.separation(center).deg
+        msk = (sep <= margin_deg) & (mag == mag)  # mag not NaN
+        if msk.sum() == 0:
+            print("[WARN] Carte atlas: aucune étoile Hipparcos dans le champ")
+            return False
+
+        stars_sel = stars[msk].transform_to(frame)
+        mag_sel = mag[msk]
+
+        x = stars_sel.lon.to(u.deg).value * 60.0  # arcmin
+        y = stars_sel.lat.to(u.deg).value * 60.0
+
+        # taille des points: magnitude -> taille
+        # Hipparcos: mag plus petite = plus brillant
+        mag_limit = ATLAS_MAG_LIMIT
+        s = (np.clip((mag_limit - mag_sel + 1.0), 0.2, 6.0) ** 2) * 3.0
+
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+
+        fig = plt.figure(figsize=(8, 8), dpi=160)
+        ax = plt.gca()
+        ax.scatter(x, y, s=s, alpha=0.85)
+
+        # convention carte du ciel: Est à gauche
+        ax.invert_xaxis()
+
+        half = radius_deg * 60.0
+        ax.set_xlim(half, -half)
+        ax.set_ylim(-half, half)
+        ax.set_aspect("equal", "box")
+
+        # Grille (arcmin)
+        ax.grid(True, linewidth=0.4, alpha=0.6)
+        ax.set_xlabel("ΔRA cos(Dec) (arcmin)")
+        ax.set_ylabel("ΔDec (arcmin)")
+
+
+        # cercle FOV (Seestar) à l'intérieur de la carte (atlas)
+        inner_half = max(1.0, float(inner_fov_arcmin) / 2.0)  # arcmin
+        ax.add_patch(plt.Circle((0, 0), inner_half, fill=False, linewidth=1.2))
+        ax.annotate(f"FOV {inner_fov_arcmin:.0f}'", xy=(inner_half, 0), xytext=(inner_half+3, 0), va="center")
+
+
+        # Lignes de constellations (si dispo)
+        # On trace seulement les segments dont les 2 étoiles tombent dans la marge
+        if cons:
+            # Accès rapide HIP -> (x,y) dans la même projection:
+            # On recalcule pour les HIPs utiles en évitant de transformer tout le catalogue.
+            # Dictionnaire hip->SkyCoord projeté
+            # df index contient les HIP
+            hip_xy = {}
+            def get_xy(hip:int):
+                if hip in hip_xy:
+                    return hip_xy[hip]
+                try:
+                    row = df.loc[hip]
+                    sc = SkyCoord(ra=float(row["ra_degrees"]) * u.deg, dec=float(row["dec_degrees"]) * u.deg, frame="icrs")
+                    if sc.separation(center).deg > margin_deg:
+                        hip_xy[hip] = None
+                        return None
+                    off = sc.transform_to(frame)
+                    xx = off.lon.to(u.deg).value * 60.0
+                    yy = off.lat.to(u.deg).value * 60.0
+                    hip_xy[hip] = (xx, yy)
+                    return (xx, yy)
+                except Exception:
+                    hip_xy[hip] = None
+                    return None
+
+            for abbr, segs in cons:
+                pts_for_label = []
+                for h1, h2 in segs:
+                    p1 = get_xy(h1)
+                    p2 = get_xy(h2)
+                    if p1 is None or p2 is None:
+                        continue
+                    ax.plot([p1[0], p2[0]], [p1[1], p2[1]], linewidth=0.6, alpha=0.7)
+                    pts_for_label.append(p1)
+                    pts_for_label.append(p2)
+                # label: moyenne si on a assez de points
+                if pts_for_label:
+                    xs = [p[0] for p in pts_for_label]
+                    ys = [p[1] for p in pts_for_label]
+                    cx = float(np.mean(xs))
+                    cy = float(np.mean(ys))
+                    if -half < cy < half and -half < cx < half:
+                        ax.text(cx, cy, abbr, fontsize=8, alpha=0.8, ha="center", va="center")
+
+        # marqueur cible
+        ax.scatter([0], [0], s=80, marker="x")
+
+        ttl = title.strip() or "Carte (atlas)"
+        ax.set_title(ttl)
+
+        fig.savefig(out_png, bbox_inches="tight")
+        plt.close(fig)
+        return True
+    except Exception as e:
+        print(f"[WARN] Carte atlas impossible: {e}")
+        return False
 
 
 def image_jsonld(item: dict, page_url: str) -> dict:
@@ -835,6 +1092,23 @@ def image_jsonld(item: dict, page_url: str) -> dict:
         "additionalProperty": add_props
     }
 
+
+
+
+def og_meta(title: str, description: str, image_url: str, page_url: str) -> str:
+    """OpenGraph + Twitter meta tags (used for link previews)."""
+    # Note: keep values already escaped by caller when needed.
+    return f"""
+<meta property="og:type" content="website">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{description}">
+<meta property="og:image" content="{image_url}">
+<meta property="og:url" content="{page_url}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title}">
+<meta name="twitter:description" content="{description}">
+<meta name="twitter:image" content="{image_url}">
+"""
 
 # ------------------------------------------------------------
 # HTML builders
@@ -1006,6 +1280,42 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
         """)
     gallery_cards_html = "\n".join(gallery_cards)
 
+    # --- Carte stellaire (finder chart) ---
+    star = hero.get("starChartUrl", "")
+    star_block = ""
+    star_modal = ""
+    if star:
+        star_id = "starChartModal"
+        star_block = f"""
+        <div class="card shadow-sm mt-3">
+          <div class="card-body">
+            <div class="d-flex align-items-baseline justify-content-between">
+              <div class="fw-semibold">Carte (atlas)</div>
+              <span class="text-muted small">Cliquez pour agrandir</span>
+            </div>
+            <a href="#" data-bs-toggle="modal" data-bs-target="#{star_id}">
+              <img src="../{html_escape(star)}" class="img-fluid mt-2 astro-preview" alt="Carte stellaire {html_escape(obj_name)}">
+            </a>
+          </div>
+        </div>
+        """
+    
+        star_modal = f"""
+        <div class="modal fade" id="{star_id}" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">Carte (atlas) — {html_escape(obj_name)}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                <img src="../{html_escape(star)}" class="img-fluid" alt="Carte stellaire {html_escape(obj_name)}">
+              </div>
+            </div>
+          </div>
+        </div>
+        """
+
     return f"""<!doctype html>
 <html lang="fr">
 <head>
@@ -1103,6 +1413,7 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
   <!-- Astrometry -->
   <div class="mb-4">
     {astro_block}
+        {star_block}
   </div>
 
   <!-- Other exposures -->
@@ -1116,6 +1427,7 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
 </main>
 
 {astro_modal}
+        {star_modal}
 
 <script src="{BOOTSTRAP_CDN_JS}"></script>
 </body>
@@ -1554,6 +1866,11 @@ def main():
                 wcs_header = load_wcs_header_only(wcs_fits)
                 if wcs_header is None:
                     continue
+                # Centre du champ (WCS) pour usage local (carte stellaire)
+                ra_c, dec_c = wcs_center_from_header(wcs_header)
+                if ra_c is not None and dec_c is not None:
+                    it["wcsCenterRaDeg"] = ra_c
+                    it["wcsCenterDecDeg"] = dec_c
 
                 img = read_best_image_from_fits(fits_path)
                 if img is None:
@@ -1576,6 +1893,39 @@ def main():
 
                 if ok_png:
                     it["astrometryUrl"] = astro_rel.as_posix()
+
+                # Carte stellaire (cache persistant + copie dans /site)
+                try:
+                    ra_c = it.get("wcsCenterRaDeg", None)
+                    dec_c = it.get("wcsCenterDecDeg", None)
+
+                    if ra_c is None or dec_c is None:
+                        # fallback Messier si disponible (si vous le mappez plus tard)
+                        ra_c = it.get("messier_ra_deg", None)
+                        dec_c = it.get("messier_dec_deg", None)
+
+                    if ra_c is not None and dec_c is not None:
+                        STAR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                        star_cache = load_star_cache()
+                        star_key = f"{obj.upper()}|{float(ra_c):.6f}|{float(dec_c):.6f}|30"
+
+                        if star_key in star_cache and Path(star_cache[star_key]).exists():
+                            star_png_cache = Path(star_cache[star_key])
+                        else:
+                            star_png_cache = STAR_CACHE_DIR / f"{slugify(obj)}_{abs(int(float(ra_c)*1000))}_{abs(int(float(dec_c)*1000))}_30.png"
+                            ok_star = make_finder_chart_png(float(ra_c), float(dec_c), star_png_cache, fov_arcmin=ATLAS_FOV_ARCMIN, inner_fov_arcmin=30.0, title=obj)
+                            if ok_star:
+                                star_cache[star_key] = str(star_png_cache)
+                                save_star_cache(star_cache)
+
+                        if star_png_cache.exists():
+                            (out / "starcharts").mkdir(parents=True, exist_ok=True)
+                            star_name = f"{slugify(obj)}-finder.png"
+                            dest_rel = Path("starcharts") / star_name
+                            shutil.copy2(star_png_cache, out / dest_rel)
+                            it["starChartUrl"] = dest_rel.as_posix()
+                except Exception as e:
+                    print(f"[WARN] Carte stellaire: erreur inattendue: {e}")
 
                     # ---------- Save to persistent cache ----------
                     shutil.copy2(wcs_fits, cached_wcs)
