@@ -59,6 +59,12 @@ CACHE_PATH = Path("cache") / "object_info.json"
 # Catalogue Messier (XLSX) placé au même endroit que le script
 MESSIER_XLSX_NAME = "Objets Messiers..xlsx"
 
+# Catalogue d’objets divers (XLSX multi-onglets) placé au même endroit que le script
+DIVERSE_XLSX_NAME = "objetsdivers.xlsx"
+
+# Limite magnitude pour labels de carte (objets divers)
+DIVERSE_LABEL_MAG_LIMIT_DEFAULT = 6.0
+
 # Cache astrométrie (persistant, hors de /site)
 ASTRO_CACHE_DIR = Path("cache") / "astrometry"
 ASTRO_CACHE_INDEX = ASTRO_CACHE_DIR / "index.json"
@@ -363,6 +369,197 @@ def load_messier_catalog(xlsx_path: Path) -> dict:
     return out
 
 
+
+def _parse_ra_dec_to_deg(ra_raw, dec_raw):
+    """Parse RA/Dec strings from the diverse XLSX into degrees (ICRS)."""
+    try:
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+    except Exception:
+        return None, None
+
+    if ra_raw is None or dec_raw is None:
+        return None, None
+    ra = str(ra_raw).strip()
+    dec = str(dec_raw).strip()
+    if not ra or not dec:
+        return None, None
+
+    # Normalize unicode symbols commonly found in astro spreadsheets
+    dec = (dec
+           .replace("°", "d")
+           .replace("º", "d")
+           .replace("’", "m")
+           .replace("′", "m")
+           .replace("'", "m")
+           .replace("″", "s")
+           .replace("”", "s")
+           .replace('"', "s")
+           .replace(" ", ""))
+    ra = ra.replace(" ", "")
+
+    def _norm_hms(s: str) -> str:
+        """Normalize RA HMS strings so seconds/minutes are within range (fixes 60s)."""
+        s0 = s
+        ss = s.strip()
+        # Accept forms like 12h34m60s, 12:34:60, 12h34m60.0
+        m = re.match(r'^([0-9]{1,3})(?:h|:)([0-9]{1,2})(?:m|:)([0-9]{1,2}(?:\.[0-9]+)?)s?$', ss)
+        if not m:
+            return s0
+        h = int(m.group(1))
+        mi = int(m.group(2))
+        sec = float(m.group(3))
+        # carry seconds -> minutes
+        if sec >= 60.0:
+            addm = int(sec // 60.0)
+            sec = sec - 60.0 * addm
+            mi += addm
+        # carry minutes -> hours
+        if mi >= 60:
+            addh = mi // 60
+            mi = mi % 60
+            h += addh
+        # Wrap within 0-23h
+        h = h % 24
+        return f"{h}h{mi}m{sec:.3f}s"
+
+    def _norm_dms(s: str) -> str:
+        """Normalize Dec DMS strings so seconds/minutes are within range (fixes 60s)."""
+        s0 = s
+        ss = s.strip()
+        m = re.match(r'^([+-]?[0-9]{1,3})(?:d|:)([0-9]{1,2})(?:m|:)([0-9]{1,2}(?:\.[0-9]+)?)s?$', ss)
+        if not m:
+            return s0
+        deg = int(m.group(1))
+        sign = -1 if str(m.group(1)).startswith('-') else 1
+        deg_abs = abs(deg)
+        mi = int(m.group(2))
+        sec = float(m.group(3))
+        if sec >= 60.0:
+            addm = int(sec // 60.0)
+            sec = sec - 60.0 * addm
+            mi += addm
+        if mi >= 60:
+            addd = mi // 60
+            mi = mi % 60
+            deg_abs += addd
+        return f"{sign*deg_abs}d{mi}m{sec:.3f}s"
+
+    # Fix occasional 60s in spreadsheets (avoids astropy IllegalSecondWarning)
+    ra = _norm_hms(ra)
+    dec = _norm_dms(dec)
+    # Some sheets use "0h40.4" (decimal minutes) – SkyCoord handles it.
+    try:
+        c = SkyCoord(ra, dec, frame="icrs")
+    except Exception:
+        try:
+            c = SkyCoord(ra=ra, dec=dec, unit=(u.hourangle, u.deg), frame="icrs")
+        except Exception:
+            return None, None
+    return float(c.ra.deg), float(c.dec.deg)
+
+
+def load_diverse_catalog(xlsx_path: Path) -> list[dict]:
+    """
+    Charge 'objetsdivers.xlsx' qui contient plusieurs onglets.
+    Retourne une liste d'objets avec au minimum:
+    - name, ra_deg, dec_deg, mag (float | None), sheet
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    out = []
+
+    def _to_float(v):
+        try:
+            if v is None:
+                return None
+            s = str(v).strip()
+            if not s:
+                return None
+            return float(s)
+        except Exception:
+            return None
+
+    for sheet in wb.sheetnames:
+        ws = wb[sheet]
+
+        # Find header row: expect 'Name', 'RA', 'Dec' at minimum
+        header_row = None
+        header = []
+        for ridx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+            if not row:
+                continue
+            row_s = [str(c).strip() if c is not None else "" for c in row]
+            joined = "|".join(row_s).lower()
+            if "name" in joined and "ra" in joined and "dec" in joined:
+                header_row = ridx
+                header = row_s
+                break
+        if not header_row:
+            continue
+
+        # Map columns
+        col = {h.strip().lower(): idx for idx, h in enumerate(header) if h and h.strip()}
+        if "name" not in col or "ra" not in col or "dec" not in col:
+            continue
+
+        # Magnitude columns differ by sheet
+        mag_key = None
+        if "mag" in col:
+            mag_key = "mag"
+        elif "min mag" in col and "max mag" in col:
+            mag_key = "minmax"
+        elif "min mag" in col:
+            mag_key = "min mag"
+
+        for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+            if not row:
+                continue
+            name = row[col["name"]] if col["name"] < len(row) else None
+            ra_raw = row[col["ra"]] if col["ra"] < len(row) else None
+            dec_raw = row[col["dec"]] if col["dec"] < len(row) else None
+            if name is None or ra_raw is None or dec_raw is None:
+                continue
+            name = str(name).strip()
+            if not name:
+                continue
+
+            ra_deg, dec_deg = _parse_ra_dec_to_deg(ra_raw, dec_raw)
+            if ra_deg is None or dec_deg is None:
+                continue
+
+            mag = None
+            if mag_key == "mag":
+                mag = _to_float(row[col["mag"]] if col["mag"] < len(row) else None)
+            elif mag_key == "minmax":
+                mn = _to_float(row[col["min mag"]] if col["min mag"] < len(row) else None)
+                mx = _to_float(row[col["max mag"]] if col["max mag"] < len(row) else None)
+                # take min magnitude if present
+                mag = mn if mn is not None else mx
+            elif mag_key == "min mag":
+                mag = _to_float(row[col["min mag"]] if col["min mag"] < len(row) else None)
+
+            out.append({
+                "name": name,
+                "ra_deg": ra_deg,
+                "dec_deg": dec_deg,
+                "mag": mag,
+                "sheet": sheet,
+            })
+
+    return out
+
+
+def find_diverse_xlsx(script_dir: Path, cwd: Path) -> Path | None:
+    candidates = [
+        script_dir / DIVERSE_XLSX_NAME,
+        cwd / DIVERSE_XLSX_NAME,
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
 def find_messier_xlsx(script_dir: Path, cwd: Path) -> Path | None:
     p1 = script_dir / MESSIER_XLSX_NAME
     if p1.exists():
@@ -451,6 +648,86 @@ def _simbad_query_basic(ident: str) -> dict | None:
         "otype": row.get("otype") or "",
         "otype_txt": row.get("otype_txt") or "",
     }
+
+
+
+def _simbad_cone_basic(ra_deg: float, dec_deg: float, radius_deg: float, max_rows: int = 200) -> list[dict]:
+    """Cone search SIMBAD TAP (table basic) autour d'un centre ICRS (RA/DEC en degrés).
+
+    Retourne une liste de dicts: {main_id, ra, dec, otype, otype_txt}
+    NOTE: on reste volontairement sur la table 'basic' (léger et stable).
+    """
+    try:
+        r = float(radius_deg)
+    except Exception:
+        r = 2.0
+    r = max(0.01, min(r, 10.0))
+
+    adql = f"""
+    SELECT TOP {int(max_rows)} b.main_id, b.ra, b.dec, b.otype, b.otype_txt
+    FROM basic AS b
+    WHERE 1=CONTAINS(
+        POINT('ICRS', b.ra, b.dec),
+        CIRCLE('ICRS', {ra_deg:.8f}, {dec_deg:.8f}, {r:.8f})
+    )
+    """
+    resp = requests.post(
+        SIMBAD_TAP,
+        data={"request": "doQuery", "lang": "adql", "format": "json", "query": adql},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    out = []
+    for row in data.get("data", []) or []:
+        # colonne order: main_id, ra, dec, otype, otype_txt
+        if not row or len(row) < 5:
+            continue
+        main_id = str(row[0] or "").strip()
+        try:
+            ra = float(row[1])
+            dec = float(row[2])
+        except Exception:
+            continue
+        otype = str(row[3] or "").strip()
+        otype_txt = str(row[4] or "").strip()
+        out.append({"main_id": main_id, "ra": ra, "dec": dec, "otype": otype, "otype_txt": otype_txt})
+    return out
+
+
+# classement "pertinence" pour les labels de carte
+_FAMOUS_STAR_NAMES = {
+    # très visibles à l'œil nu / noms très connus
+    "SIRIUS", "CANOPUS", "ARCTURUS", "VEGA", "CAPELLA", "RIGEL", "PROCyon".upper(),
+    "ACHERNAR", "BETELGEUSE", "HADAR", "ALTAIR", "ALDEBARAN", "ANTARES",
+    "SPICA", "POLLUX", "FOMALHAUT", "DENEB", "REGULUS", "CASTOR",
+    "ALPHA CENTAURI", "CENTAU".upper(), "CRUX".upper(), "ACRUX", "MIMOSA",
+}
+
+def _label_score(main_id: str, otype: str) -> tuple:
+    """Retourne un tuple comparable: plus petit => plus important."""
+    mid = (main_id or "").strip()
+    up = mid.upper()
+    # Messier d'abord
+    if re.match(r"^M\s*\d+\b", up):
+        # extraire numéro pour trier par proximité ensuite; ici on met catégorie
+        return (0, 0, up)
+    # Étoiles "fameuses" ensuite
+    if any(name in up for name in _FAMOUS_STAR_NAMES):
+        return (1, 0, up)
+    # Autres étoiles (SIMBAD otype peut être '*' / 'Star' etc.)
+    if (otype or "").strip() in {"*", "**", "V*", "PM*", "SB*", "EB*"} or "star" in (otype or "").lower():
+        return (2, 0, up)
+    # NGC / IC / Caldwell etc.
+    if re.match(r"^(NGC|IC)\s*\d+\b", up):
+        return (3, 0, up)
+    # le reste
+    return (4, 0, up)
+
+def _clean_main_id_for_label(main_id: str) -> str:
+    s = (main_id or "").strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
 
 
 def enrich_tags(object_name_for_simbad: str, cache: dict) -> dict:
@@ -929,7 +1206,7 @@ def _load_constellation_lines():
         return _CONSTELLATION_LINES
 
 
-def make_finder_chart_png(ra_deg: float, dec_deg: float, out_png: Path, fov_arcmin: float | None = None, inner_fov_arcmin: float = 30.0, title: str = "") -> bool:
+def make_finder_chart_png(ra_deg: float, dec_deg: float, out_png: Path, fov_arcmin: float | None = None, inner_fov_arcmin: float = 30.0, title: str = "", diverse_catalog: list[dict] | None = None, diverse_mag_limit: float = DIVERSE_LABEL_MAG_LIMIT_DEFAULT) -> bool:
     """
     Génère une carte 'atlas' (grille RA/Dec, étoiles, lignes de constellations) centrée sur (RA,DEC).
     - rendu local open source (matplotlib + astropy + skyfield)
@@ -1050,6 +1327,132 @@ def make_finder_chart_png(ra_deg: float, dec_deg: float, out_png: Path, fov_arcm
 
         # marqueur cible
         ax.scatter([0], [0], s=80, marker="x")
+
+        # label de l'objet au centre (cible)
+        target_label = title.strip()
+        if target_label:
+            ax.text(0.0, -half * 0.92, target_label, fontsize=10, ha="center", va="top")
+
+        # objets "pertinents" proches via SIMBAD (Messier d'abord, puis étoiles connues/lumineuses)
+        try:
+            nearby = _simbad_cone_basic(ra_deg, dec_deg, radius_deg=margin_deg, max_rows=300)
+        except Exception as e:
+            print(f"[WARN] Carte atlas: requête SIMBAD (cone) impossible: {e}")
+            nearby = []
+
+        # Projeter et choisir quelques labels sans trop d'encombrement
+        if nearby or diverse_catalog:
+            placed = []  # list of (x,y)
+            max_labels = 10
+
+            # --- Labels pertinents (atlas) ---
+            # Règle: afficher uniquement
+            #  1) Objets Messier (via SIMBAD cone) dans le champ
+            #  2) Objets provenant de 'objetsdivers.xlsx' avec magnitude <= diverse_mag_limit dans le champ
+            label_candidates = []
+
+            # 1) Messier (depuis SIMBAD cone)
+            for it in nearby:
+                mid_raw = str(it.get("main_id","") or "").strip()
+                if re.match(r"^M\s*\d+\b", mid_raw.upper()):
+                    label_candidates.append(it)
+
+            # 2) Objets divers (catalogue local)
+            if diverse_catalog:
+                try:
+                    center_icrs = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
+                    half_deg = (fov_arcmin / 60.0) / 2.0
+                    for ob in diverse_catalog:
+                        mag = ob.get("mag", None)
+                        if mag is None:
+                            continue
+                        try:
+                            if float(mag) > float(diverse_mag_limit):
+                                continue
+                        except Exception:
+                            continue
+                        try:
+                            c = SkyCoord(ra=float(ob["ra_deg"]) * u.deg, dec=float(ob["dec_deg"]) * u.deg, frame="icrs")
+                            if float(c.separation(center_icrs).deg) <= (half_deg * 1.05):
+                                label_candidates.append({
+                                    "main_id": ob.get("name",""),
+                                    "ra": float(ob["ra_deg"]),
+                                    "dec": float(ob["dec_deg"]),
+                                    "otype": "CAT",
+                                    "otype_txt": f'{ob.get("sheet","")}',
+                                    "mag": float(mag),
+                                })
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            # trier: Messier d'abord, puis magnitude ascendante, puis distance au centre
+            center_icrs = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
+
+            def _is_messier(it):
+                return bool(re.match(r"^M\s*\d+\b", str(it.get("main_id","")).upper()))
+
+            def _mag(it):
+                try:
+                    return float(it.get("mag", 99.0))
+                except Exception:
+                    return 99.0
+
+            def _dist_deg(it):
+                try:
+                    c = SkyCoord(ra=float(it["ra"]) * u.deg, dec=float(it["dec"]) * u.deg, frame="icrs")
+                    return float(c.separation(center_icrs).deg)
+                except Exception:
+                    return 999.0
+
+            nearby_sorted = sorted(
+                label_candidates,
+                key=lambda it: (0 if _is_messier(it) else 1, _mag(it), _dist_deg(it))
+            )
+            for it in nearby_sorted:
+                mid = _clean_main_id_for_label(it.get("main_id",""))
+                if not mid:
+                    continue
+                # ne pas répéter le titre central si c'est le même
+                if target_label and mid.upper() == target_label.upper():
+                    continue
+
+                try:
+                    c = SkyCoord(
+                        ra=float(it["ra"]) * u.deg,
+                        dec=float(it["dec"]) * u.deg,
+                        frame="icrs",
+                    ).transform_to(frame)
+                    # IMPORTANT: la carte est en **arcmin** (comme les étoiles Hipparcos plus haut)
+                    # Donc on convertit lon/lat (degrés) -> arcmin pour positionner correctement les labels.
+                    x = float(c.lon.to(u.deg).value * 60.0)
+                    y = float(c.lat.to(u.deg).value * 60.0)
+                except Exception:
+                    continue
+
+                if not (-half < x < half and -half < y < half):
+                    continue
+
+                # anti-collision simple
+                ok = True
+                # (x,y) en arcmin -> distance mini en arcmin
+                min_sep = 6.0  # arcmin (évite que les noms se pile au centre)
+                for (px, py) in placed:
+                    if (x - px) ** 2 + (y - py) ** 2 < (min_sep ** 2):
+                        ok = False
+                        break
+                if not ok:
+                    continue
+
+                ax.scatter([x], [y], s=18, marker="o", alpha=0.9)
+                # placer le texte légèrement sous le symbole (en arcmin)
+                ax.text(x, y - 2.0, mid, fontsize=7.5, ha="center", va="top", alpha=0.9)
+                placed.append((x, y))
+
+                if len(placed) >= max_labels:
+                    break
+
 
         ttl = title.strip() or "Carte (atlas)"
         ax.set_title(ttl)
@@ -1586,6 +1989,21 @@ def main():
     else:
         print(f"[INFO] Catalogue Messier introuvable (attendu: {MESSIER_XLSX_NAME} près du script).")
 
+
+    # Catalogue d’objets divers (pour labels de la carte): objets <= mag 6
+    diverse_xlsx = find_diverse_xlsx(script_dir, root)
+    diverse_catalog = []
+    if diverse_xlsx:
+        try:
+            diverse_catalog = load_diverse_catalog(diverse_xlsx)
+            print(f"[INFO] Catalogue objets divers chargé: {diverse_xlsx} ({len(diverse_catalog)} entrées)")
+        except Exception as e:
+            print(f"[WARN] Lecture catalogue objets divers impossible: {diverse_xlsx} ({e})")
+            diverse_catalog = []
+    else:
+        print(f"[INFO] Catalogue objets divers introuvable (attendu: {DIVERSE_XLSX_NAME} près du script).")
+
+    diverse_mag_limit = float(os.environ.get("GNU_ASTRO_GALERY_DIVERSE_MAG_LIMIT", str(DIVERSE_LABEL_MAG_LIMIT_DEFAULT)))
     NOVA_API_KEY = os.environ.get("NOVA_ASTROMETRY_API_KEY", "").strip()
     if not NOVA_API_KEY:
         print("[INFO] NOVA_ASTROMETRY_API_KEY non défini -> pas d'astrométrie (plate solve)")
@@ -1913,7 +2331,7 @@ def main():
                             star_png_cache = Path(star_cache[star_key])
                         else:
                             star_png_cache = STAR_CACHE_DIR / f"{slugify(obj)}_{abs(int(float(ra_c)*1000))}_{abs(int(float(dec_c)*1000))}_30.png"
-                            ok_star = make_finder_chart_png(float(ra_c), float(dec_c), star_png_cache, fov_arcmin=ATLAS_FOV_ARCMIN, inner_fov_arcmin=30.0, title=obj)
+                            ok_star = make_finder_chart_png(float(ra_c), float(dec_c), star_png_cache, fov_arcmin=ATLAS_FOV_ARCMIN, inner_fov_arcmin=30.0, title=obj, diverse_catalog=diverse_catalog, diverse_mag_limit=diverse_mag_limit)
                             if ok_star:
                                 star_cache[star_key] = str(star_png_cache)
                                 save_star_cache(star_cache)
