@@ -41,6 +41,17 @@ ATLAS_MAG_LIMIT = float(os.environ.get("GNU_ASTRO_GALERY_ATLAS_MAG_LIMIT", "10")
 from PIL import Image
 from openpyxl import load_workbook
 
+# ------------------------------------------------------------
+# Module optionnel: météo (Open-Meteo) à partir du header FITS
+# ------------------------------------------------------------
+try:
+    from space_weather import render_space_weather_block as _render_space_weather_block
+    HAS_SPACE_WEATHER = True
+except Exception:
+    _render_space_weather_block = None
+    HAS_SPACE_WEATHER = False
+
+
 
 # -------------------------
 # Configuration
@@ -1629,6 +1640,17 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
         for t in tags
     ) or "<span class='text-muted'>Aucun tag</span>"
 
+    # --- Météo et conditions d’observation (module externe) ---
+    space_weather_block = ""
+    if HAS_SPACE_WEATHER and _render_space_weather_block:
+        fp = hero.get("_fitsPath") or hero.get("fitsPath") or hero.get("fits_path")
+        try:
+            if fp and Path(fp).exists():
+                space_weather_block = _render_space_weather_block(fp)
+        except Exception:
+            space_weather_block = "<p class='text-muted'>Données météo non disponibles.</p>"
+
+
     # --- Astrométrie (preview + modal) ---
     astro = hero.get("astrometryUrl", "")
     astro_block = ""
@@ -1811,6 +1833,11 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Space weather -->
+  <div class="mb-4">
+    {space_weather_block}
   </div>
 
   <!-- Astrometry -->

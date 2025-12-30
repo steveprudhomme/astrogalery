@@ -159,4 +159,4 @@
 ---
 
 **Auteur / Author**  
-Steve Prud’Homme
+Steve Prud’Homme, Laval, Québec.

@@ -12,95 +12,62 @@ Le projet vise à produire une galerie :
 
 ---
 
-## Table des matières
+## Architecture générale
 
-- Fonctionnalités
-- Philosophie du projet
-- Structure des données
-- Prérequis
-- Installation
-- Utilisation
-- Catalogue Messier (XLSX)
-- Catalogue d’objets divers (XLSX)
-- Enrichissement astronomique (SIMBAD)
-- Pages objet
-- Astrométrie
-- Cartes stellaires (atlas)
-- Cache
-- Météo spatiale et conditions d’observation
-- Règles d’inclusion / exclusion
-- SEO et métadonnées
-- Dépannage
-- Sécurité et bonnes pratiques
-- Publication
-- Licence
-- Crédits
+- **generate_gallery.py**  
+  Script principal (point d’entrée). Il orchestre :
+  - le scan des images et FITS,
+  - l’enrichissement astronomique (SIMBAD, catalogues),
+  - la génération HTML,
+  - l’appel aux modules spécialisés.
+
+- **space_weather.py**  
+  Module externe importé dynamiquement par `generate_gallery.py`.  
+  Il **ne doit jamais être exécuté seul**.  
+  Il fournit le bloc *Météo & conditions d’observation* à partir des en-têtes FITS.
 
 ---
 
-## Fonctionnalités
+## Fonctionnalités principales
 
 - Génération complète d’un **site Web statique**
 - Page d’accueil :
   - toutes les images détectées
-  - tri chronologique (plus récent → plus ancien)
+  - tri chronologique
   - recherche textuelle instantanée
-  - filtres dynamiques (types, catalogues)
-- Navigation naturelle :
-  - clic sur l’image → page objet
-- Pages objet comprenant :
-  - image principale mise en valeur
-  - auteur et licence
+  - filtres dynamiques
+- Pages objet :
+  - image principale dominante
   - métadonnées FITS complètes
   - caractéristiques astronomiques
-  - image astrométrique cliquable
-  - **carte stellaire de type atlas**
-  - bloc de **conditions d’observation / météo spatiale**
-- Enrichissement automatique via :
-  - SIMBAD
-  - catalogue Messier local (XLSX)
-  - catalogue d’objets divers multi-feuilles (XLSX)
-- Astrométrie automatique (optionnelle)
-- Mise en cache intelligente (requêtes, images, cartes)
-- SEO intégré :
-  - sitemap.xml
-  - robots.txt
-  - OpenGraph
-  - JSON-LD (schema.org / ImageObject)
+  - astrométrie
+  - carte stellaire (atlas)
+  - **conditions d’observation (module météo)**
 
 ---
 
-## Philosophie du projet
+## Météo spatiale et conditions d’observation
 
-GNU Astro Galery repose sur quelques principes clés :
+Le bloc météo est généré automatiquement via le module `space_weather.py` à partir des champs FITS suivants :
 
-- **Une image correspond à un objet astronomique**
-- **Chaque objet possède sa propre page documentaire**
-- Les données doivent être :
-  - traçables,
-  - reproductibles,
-  - basées sur des sources ouvertes
-- Le site généré doit rester lisible dans 10 ans sans dépendance serveur
+- `DATE-OBS`
+- `SITELAT`
+- `SITELONG`
 
----
+Données actuellement prises en charge :
+- température
+- humidité
+- pression atmosphérique
+- direction et vitesse du vent
 
-## Structure des données
-
-Le script analyse un répertoire racine contenant :
-
-- images finales (JPEG / PNG / FITS convertis)
-- fichiers FITS associés
-- sous-répertoires d’objets
-
-Les noms de répertoires sont utilisés comme **clé primaire astronomique**
-(Messier, NGC, IC, nom usuel).
+Les données sont issues de services météo open source et mises en cache localement.
 
 ---
 
 ## Prérequis
 
-- Python **3.10+**
-- Librairies principales :
+- Python 3.10+
+- Bibliothèques principales :
   - astropy
   - astroquery
   - numpy
@@ -109,17 +76,6 @@ Les noms de répertoires sont utilisés comme **clé primaire astronomique**
   - pillow
   - requests
   - openpyxl
-- Compte astrometry.net (optionnel)
-
----
-
-## Installation
-
-```bash
-python -m venv venv
-source venv/bin/activate  # Windows : venv\Scripts\activate
-pip install -r requirements.txt
-```
 
 ---
 
@@ -129,159 +85,18 @@ pip install -r requirements.txt
 python generate_gallery.py
 ```
 
-Le site est généré dans le dossier :
-
-```text
-site/
-```
-
----
-
-## Catalogue Messier (XLSX)
-
-- Fichier local : `Objets Messiers.xlsx`
-- Utilisé pour :
-  - type d’objet
-  - magnitude
-  - taille apparente
-  - distance
-  - constellation
-- Les données Messier sont **prioritaires** sur SIMBAD.
-
----
-
-## Catalogue d’objets divers (XLSX)
-
-- Fichier multi-feuilles : `objetsdivers.xlsx`
-- Inclusion conditionnelle :
-  - objets de magnitude **≤ 6**
-- Utilisé pour enrichir les **cartes stellaires** uniquement.
-
----
-
-## Enrichissement astronomique (SIMBAD)
-
-SIMBAD est utilisé pour :
-- coordonnées précises
-- désignations alternatives
-- types astrophysiques
-
-Toutes les requêtes sont mises en cache localement.
-
----
-
-## Pages objet
-
-Chaque page objet inclut :
-
-1. Image principale
-2. Auteur : **Steve Prud’Homme**
-3. Licence : **Creative Commons CC0 1.0**
-4. Métadonnées FITS (tableau)
-5. Caractéristiques astronomiques (tableau)
-6. Image astrométrique
-7. Carte stellaire (atlas)
-8. Bloc conditions d’observation / météo spatiale
-
----
-
-## Astrométrie
-
-- Basée sur **astrometry.net**
-- Support des FITS avec ou sans image 2D
-- Génération PNG annotée
-- Mise en cache automatique
-
----
-
-## Cartes stellaires (atlas)
-
-- Générées localement (matplotlib + astropy)
-- Projection plane centrée sur l’objet
-- Éléments affichés :
-  - objets Messier
-  - objets divers (mag ≤ 6)
-- Noms positionnés sous leur symbole
-
----
-
-## Cache
-
-Sont mis en cache :
-- requêtes SIMBAD
-- résultats d’astrométrie
-- cartes stellaires
-
-Objectif : éviter toute requête inutile lors des régénérations.
-
----
-
-## Météo spatiale et conditions d’observation
-
-À partir des en-têtes FITS (`DATE-OBS`, `SITELAT`, `SITELONG`) :
-
-- seeing (estimé)
-- échelle de Bortle (approximée)
-- température
-- humidité
-- pression atmosphérique
-- vent (direction et vitesse)
-
-Les données sont récupérées via des APIs météo open source.
-
----
-
-## Règles d’inclusion / exclusion
-
-Sont exclus automatiquement :
-- répertoires `_sub` et `-sub`
-- fichiers miniatures `*_thn.jpg`
-
----
-
-## SEO et métadonnées
-
-- OpenGraph par page
-- JSON-LD ImageObject
-- sitemap.xml automatique
-- robots.txt
-
----
-
-## Dépannage
-
-- Vérifier les messages `[WARN]` dans la console
-- Supprimer le cache en cas de changement majeur
-- Tester sur un sous-ensemble réduit d’images
-
----
-
-## Sécurité et bonnes pratiques
-
-- Site 100 % statique
-- Aucune donnée personnelle stockée
-- Astrometry.net utilisé uniquement pour la résolution d’images
-
----
-
-## Publication
-
-Compatible avec :
-- GitHub Pages
-- Apache / Nginx
-- NAS personnels
+Un seul script doit être lancé.  
+Les modules (ex. `space_weather.py`) sont appelés automatiquement.
 
 ---
 
 ## Licence
 
-- Code : **GNU GPL v3**
-- Images : **Creative Commons CC0 1.0** (sauf mention contraire)
+- Code : GNU GPL v3
+- Images : Creative Commons CC0 1.0
 
 ---
 
-## Crédits
-
-Conception, développement et astrophotographie :
+## Auteur
 
 **Steve Prud’Homme**
