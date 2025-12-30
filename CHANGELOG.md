@@ -1,71 +1,74 @@
-# Changelog
+# CHANGELOG
 Tous les changements notables de **GNU Astro Galery** sont documentés dans ce fichier.
 
-Le format suit l’esprit de **Keep a Changelog**, avec une numérotation de version interne au projet.
+Le projet suit l’esprit de **Keep a Changelog** avec une numérotation de version interne propre au projet.
 
 ---
 
-## [00.00.07] – 2025-09-28
+## [0.8.0] – 2025-09-30
 
 ### Ajouté
-- Génération de **cartes stellaires de type atlas** sur les pages objet
-- Affichage sur les cartes :
-  - de l’objet cible,
-  - des **objets Messier présents dans le champ**,
-  - des objets issus de `objetsdivers.xlsx` avec **magnitude ≤ 6**
-- Support d’un **catalogue XLSX multi-onglets** pour les objets divers
-- Filtrage intelligent des labels :
-  - exclusion des identifiants techniques (Gaia, ZTF, TYC, etc.)
-  - priorité aux objets astronomiques pertinents
-- Ajout d’un **système de cache** pour :
-  - SIMBAD,
-  - astrométrie,
+- Génération d’une **page objet centrale et documentaire**
+- Ajout d’un **bloc Météo & conditions d’observation** basé sur :
+  - `DATE-OBS`, `SITELAT`, `SITELONG` (FITS)
+  - données météo historiques open source
+- Génération de **cartes stellaires de type atlas** :
+  - centrées sur l’objet observé
+  - affichage des objets Messier dans le champ
+  - affichage des objets issus de `objetsdivers.xlsx` (magnitude ≤ 6)
+- Support d’un **catalogue XLSX multi-feuilles** pour les objets divers
+- Mise en place d’un **cache persistant** pour :
+  - SIMBAD
+  - astrométrie
   - cartes stellaires
-- Ajout des **métadonnées complètes** sur les pages objet :
-  - auteur (Steve Prud’Homme)
-  - licence (Creative Commons CC0 1.0)
+  - météo d’observation
+- Ajout systématique des métadonnées :
+  - Auteur : Steve Prud’Homme
+  - Licence : Creative Commons CC0 1.0
+- Intégration complète du SEO :
+  - OpenGraph
+  - JSON-LD (ImageObject)
+  - sitemap.xml
+  - robots.txt
 
 ### Modifié
 - Navigation :
-  - clic sur une image de la page d’accueil mène directement à la **page objet**
+  - clic sur une image mène directement à la **page objet**
   - suppression des liens redondants sous les vignettes
-- Mise en page des pages objet :
+- Pages objet :
   - image principale dominante
-  - sections clairement structurées (Métadonnées, Caractéristiques, Astrométrie, Carte)
-- Enrichissement des objets :
-  - utilisation prioritaire du **nom du répertoire** pour les requêtes SIMBAD
-- Normalisation des coordonnées célestes :
-  - correction automatique des coordonnées comportant des secondes à 60
-- Intégration complète des données Messier (XLSX) dans :
-  - les filtres,
-  - les tags,
-  - les tableaux descriptifs,
-  - les cartes stellaires
+  - sections normalisées et hiérarchisées
+- Enrichissement astronomique :
+  - priorité au **nom du répertoire** pour SIMBAD
+  - priorité aux données Messier locales sur SIMBAD
+- Cartes stellaires :
+  - filtrage des identifiants techniques (Gaia, ZTF, TYC, etc.)
+  - priorité aux objets visibles et pédagogiques
 
 ### Corrigé
-- Problèmes d’affichage des labels concentrés au centre des cartes
-- Génération incorrecte des PNG astrométriques lorsque seuls les headers WCS sont présents
-- Gestion des dossiers exclus :
+- Positionnement incorrect des labels (regroupés au centre)
+- Génération des PNG astrométriques lorsque seul le WCS est disponible
+- Exclusion incorrecte de certains dossiers :
   - `_sub`
   - `-sub`
-- Gestion des permissions Windows lors de la création des dossiers du site
-- Régression liée aux métadonnées OpenGraph (fonction manquante)
+- Problèmes de permissions Windows lors de la création des dossiers
+- Erreurs liées aux métadonnées OpenGraph manquantes
+- Normalisation automatique des coordonnées célestes invalides (secondes = 60)
 
 ---
 
-## [00.00.06] – 2025-09-20
+## [0.7.x] – 2025-09
 
 ### Ajouté
 - Cache local pour les requêtes SIMBAD
-- Première intégration du catalogue Messier local (XLSX)
-- Ajout de l’astrométrie via astrometry.net (optionnelle)
+- Première intégration du catalogue Messier (XLSX)
+- Astrométrie via astrometry.net (optionnelle)
 
 ### Modifié
 - Amélioration de la détection automatique :
-  - type d’objet,
-  - catalogue,
+  - type d’objet
+  - catalogue
   - nom principal
-- Génération de pages objet individuelles
 
 ### Corrigé
 - Exclusion des fichiers `*_thn.jpg`
@@ -73,48 +76,51 @@ Le format suit l’esprit de **Keep a Changelog**, avec une numérotation de ver
 
 ---
 
-## [00.00.05] – 2025-09-10
+## [0.6.x] – 2025-08
 
 ### Ajouté
 - Recherche textuelle dynamique côté client
 - Filtres par type d’objet et catalogue
-- Génération de sitemap.xml et robots.txt
+- Génération automatique de sitemap.xml et robots.txt
 
-### Modifié
-- Amélioration de la structure HTML5
+---
+
+## [0.5.x] – 2025-08
+
+### Ajouté
+- Génération automatique d’une galerie HTML statique
 - Intégration de Bootstrap 5
 
 ---
 
-## [00.00.04] – 2025-08-25
-
-### Ajouté
-- Génération automatique d’une galerie statique HTML
-- Détection automatique des images finales Seestar S50
-
----
-
-## [00.00.03] – 2025-08-10
+## [0.4.x] – 2025-07
 
 ### Ajouté
 - Extraction des métadonnées FITS
-- Structuration initiale des pages
+- Structuration initiale des pages objet
 
 ---
 
-## [00.00.02] – 2025-07-30
+## [0.3.x] – 2025-07
 
 ### Ajouté
-- Scan récursif du répertoire MyWorks
-- Détection des images JPEG finales
+- Scan récursif du répertoire racine
+- Détection des images finales Seestar S50
 
 ---
 
-## [00.00.01] – 2025-07-15
+## [0.2.x] – 2025-07
+
+### Ajouté
+- Organisation par répertoires d’objets
+
+---
+
+## [0.1.0] – 2025-07-15
 
 ### Ajouté
 - Prototype initial de génération de galerie
-- Organisation par répertoires d’objets
+- Architecture générale du projet
 
 ---
 
