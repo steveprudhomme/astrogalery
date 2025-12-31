@@ -1,17 +1,28 @@
 # space_weather.py
-# GNU Astro Galery — Module météo (local + API)
+# Module pour GNU Astro Galery
 #
-# FR:
-#  - Extrait DATE-OBS, SITELAT, SITELONG depuis un FITS Seestar S50
-#  - Interroge Open‑Meteo (archive API) pour obtenir des conditions météo (UTC)
-#  - Retourne un bloc HTML Bootstrap à injecter dans la page objet
-#  - Met en cache les réponses pour éviter de re-télécharger inutilement
+# Rôle:
+# - Extraire (DATE-OBS, SITELAT, SITELONG) depuis un FITS
+# - Interroger Open-Meteo (archive API) pour obtenir des conditions météo
+# - Retourner un bloc HTML Bootstrap prêt à injecter dans la page objet
 #
-# EN:
-#  - Extracts DATE-OBS, SITELAT, SITELONG from a Seestar S50 FITS
-#  - Calls Open‑Meteo archive API to fetch weather conditions (UTC)
-#  - Returns a Bootstrap HTML block for the object page
-#  - Caches results to avoid unnecessary re-downloads
+# Notes:
+# - Ce module n'est PAS un script à exécuter directement.
+# - Il est importé et utilisé par generate_gallery.py.
+#
+# Champs FITS attendus:
+# - DATE-OBS (ISO 8601, idéalement UTC, ex: 2025-09-19T23:29:26Z)
+# - SITELAT, SITELONG (degrés décimaux)
+#
+# Données météo (UTC):
+# - Température (°C)
+# - Humidité (%)
+# - Pression (hPa)
+# - Vent (km/h + direction °)
+#
+# Cache:
+# - Un cache local léger évite de re-télécharger la même heure/site.
+#   Fichier: .cache/space_weather_cache.json (à côté du script principal)
 
 from __future__ import annotations
 
@@ -46,6 +57,7 @@ def _save_cache(cache: Dict[str, Any]) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
+        # Cache best-effort
         pass
 
 
@@ -53,14 +65,16 @@ def _parse_date_obs(date_obs: str) -> Optional[datetime]:
     if not date_obs:
         return None
     s = str(date_obs).strip()
-    if s.endswith("Z"):
-        s = s[:-1]
+    # Normalize common FITS variants
+    s = s.replace("Z", "")
     try:
         dt = datetime.fromisoformat(s)
     except Exception:
+        # Last resort: try trimming subseconds
         try:
             if "." in s:
-                dt = datetime.fromisoformat(s.split(".")[0])
+                s2 = s.split(".")[0]
+                dt = datetime.fromisoformat(s2)
             else:
                 return None
         except Exception:
@@ -73,6 +87,8 @@ def extract_site_time_from_fits(fits_path: str | Path) -> Optional[Tuple[datetim
     if not fp.exists():
         return None
 
+    # Seestar / astrometry downloads may produce header-only FITS or non-standard cards.
+    # ignore_missing_simple=True makes Astropy more tolerant.
     with fits.open(fp, ignore_missing_simple=True) as hdul:
         hdr = hdul[0].header
 
@@ -94,6 +110,7 @@ def extract_site_time_from_fits(fits_path: str | Path) -> Optional[Tuple[datetim
 
 
 def fetch_openmeteo_conditions(dt_utc: datetime, lat: float, lon: float) -> Optional[Dict[str, Any]]:
+    # Cache key: hour + rounded lat/lon to reduce duplicates
     hour = dt_utc.replace(minute=0, second=0, microsecond=0)
     key = f"{hour.isoformat()}|{lat:.4f}|{lon:.4f}"
 
@@ -120,26 +137,27 @@ def fetch_openmeteo_conditions(dt_utc: datetime, lat: float, lon: float) -> Opti
     r.raise_for_status()
     data = r.json()
 
-    hourly = data.get("hourly") or {}
-    times = hourly.get("time") or []
+    hours = data.get("hourly", {}) or {}
+    times = hours.get("time", []) or []
     if not times:
         return None
 
-    def t(i: int) -> datetime:
+    # Find nearest hour index
+    def _t(i: int) -> datetime:
         return datetime.fromisoformat(times[i]).replace(tzinfo=timezone.utc)
 
-    idx = min(range(len(times)), key=lambda i: abs(t(i) - hour))
+    idx = min(range(len(times)), key=lambda i: abs(_t(i) - hour))
 
     out = {
-        "temperature_c": (hourly.get("temperature_2m") or [None])[idx],
-        "humidity_pct": (hourly.get("relative_humidity_2m") or [None])[idx],
-        "pressure_hpa": (hourly.get("surface_pressure") or [None])[idx],
-        "wind_speed_kmh": (hourly.get("wind_speed_10m") or [None])[idx],
-        "wind_dir_deg": (hourly.get("wind_direction_10m") or [None])[idx],
+        "temperature_c": (hours.get("temperature_2m", [None]) or [None])[idx],
+        "humidity_pct": (hours.get("relative_humidity_2m", [None]) or [None])[idx],
+        "pressure_hpa": (hours.get("surface_pressure", [None]) or [None])[idx],
+        "wind_speed_kmh": (hours.get("wind_speed_10m", [None]) or [None])[idx],
+        "wind_dir_deg": (hours.get("wind_direction_10m", [None]) or [None])[idx],
         "datetime_utc": hour.isoformat(),
         "lat": lat,
         "lon": lon,
-        "source": "Open‑Meteo archive (UTC)",
+        "source": "Open-Meteo archive (UTC)",
     }
 
     cache[key] = out
@@ -152,9 +170,8 @@ def render_space_weather_block(fits_path: str | Path) -> str:
     if not info:
         return (
             "<div class='card shadow-sm'>"
-            "<div class='card-header'><strong>Météo et conditions d’observation</strong></div>"
             "<div class='card-body text-muted'>"
-            "Données FITS insuffisantes (DATE-OBS/SITELAT/SITELONG)."
+            "Météo/conditions: données FITS insuffisantes (DATE-OBS/SITELAT/SITELONG)."
             "</div></div>"
         )
 
