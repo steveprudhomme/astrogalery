@@ -1,35 +1,21 @@
-# CHANGELOG
+# CHANGELOG — GNU Astro Galery
 
-Tous les changements notables de **GNU Astro Galery** sont documentés dans ce fichier.
+## [0.8.0] — 2025‑09
 
----
+### Ajouts
+- Bloc météo / conditions d’observation sur les pages objet
+- Extraction DATE-OBS / SITELAT / SITELONG depuis les FITS Seestar
+- Récupération météo via Open‑Meteo (archive API)
+- Cache local météo
+- Indicateur de progression météo en console
 
-## [0.8.0] – 2025-09
+### Correctifs
+- Correction critique : conservation des chemins FITS/JPG internes jusqu’à la génération des pages objet
+- Correction des erreurs d’indentation bloquantes
+- Correction du lien FITS → page objet (météo et astrométrie)
+- Ouverture FITS plus robuste (`ignore_missing_simple=True`)
 
-### Ajouté
-- Génération des pages objet complètes et documentaires
-- Intégration des catalogues :
-  - Messier (XLSX)
-  - objets divers (XLSX multi-feuilles)
-- Cartes stellaires locales (type atlas)
-- Astrométrie optionnelle avec mise en cache
-- **Intégration du module externe `space_weather.py`**
-  - génération des conditions d’observation depuis les en-têtes FITS
-  - module importé dynamiquement (non exécutable seul)
-- SEO complet :
-  - OpenGraph
-  - JSON-LD
-  - sitemap.xml
-
-### Modifié
-- Architecture :
-  - clarification du rôle du script principal et des modules
-- Navigation :
-  - clic sur l’image mène directement à la page objet
-
-### Corrigé
-- Exclusion correcte des dossiers `_sub` et `-sub`
-- Exclusion des miniatures `_thn.jpg`
-- Corrections de positionnement des labels sur les cartes stellaires
-
----
+### Technique
+- Module météo isolé (`space_weather.py`)
+- Séparation données internes / données publiques
+- Aucune régression sur la starmap, l’astrométrie ou les catalogues

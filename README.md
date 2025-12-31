@@ -1,102 +1,104 @@
 # GNU Astro Galery
+
 **Version : 0.8.0**
 
-**GNU Astro Galery** est un générateur de galerie Web statique (HTML5 / CSS3 / Bootstrap 5) destiné aux images d’astrophotographie, initialement produites avec le **télescope intelligent Seestar S50**, mais conçu pour rester générique et extensible.
-
-Le projet vise à produire une galerie :
-- esthétique et moderne,
-- scientifiquement documentée,
-- totalement statique (aucun backend requis),
-- facilement publiable (GitHub Pages, serveur Web, NAS),
-- centrée sur la **page objet** comme unité principale de navigation.
+GNU Astro Galery est un générateur de galerie astrophotographique statique conçu pour les images produites par le télescope intelligent **Seestar S50**.  
+Il analyse automatiquement les répertoires d’images, enrichit les objets astronomiques à l’aide de catalogues et de services open source, puis génère un site Web HTML5 moderne, documenté et pérenne.
 
 ---
 
-## Architecture générale
+## ✨ Fonctionnalités principales
 
-- **generate_gallery.py**  
-  Script principal (point d’entrée). Il orchestre :
-  - le scan des images et FITS,
-  - l’enrichissement astronomique (SIMBAD, catalogues),
-  - la génération HTML,
-  - l’appel aux modules spécialisés.
-
-- **space_weather.py**  
-  Module externe importé dynamiquement par `generate_gallery.py`.  
-  Il **ne doit jamais être exécuté seul**.  
-  Il fournit le bloc *Météo & conditions d’observation* à partir des en-têtes FITS.
-
----
-
-## Fonctionnalités principales
-
-- Génération complète d’un **site Web statique**
-- Page d’accueil :
-  - toutes les images détectées
-  - tri chronologique
-  - recherche textuelle instantanée
-  - filtres dynamiques
-- Pages objet :
-  - image principale dominante
-  - métadonnées FITS complètes
-  - caractéristiques astronomiques
-  - astrométrie
-  - carte stellaire (atlas)
-  - **conditions d’observation (module météo)**
+- Génération automatique d’une galerie HTML5/CSS3 (Bootstrap)
+- Page d’accueil chronologique (du plus récent au plus ancien)
+- Pages objet détaillées avec :
+  - Image principale
+  - Auteur et licence (CC0 1.0)
+  - Métadonnées FITS complètes
+  - Caractéristiques astronomiques de l’objet
+  - Astrométrie (WCS → PNG)
+  - Carte stellaire de type atlas
+  - **Bloc météo / conditions d’observation**
+- Enrichissement automatique des objets via :
+  - SIMBAD
+  - Catalogue Messier (XLSX)
+  - Catalogue objets divers (XLSX multi-feuilles)
+- Cache local (astrométrie et météo)
+- Sémantique Web (JSON‑LD, OpenGraph)
+- Fonctionnement 100 % local (Windows natif)
 
 ---
 
-## Météo spatiale et conditions d’observation
+## 🌤️ Bloc météo / conditions d’observation
 
-Le bloc météo est généré automatiquement via le module `space_weather.py` à partir des champs FITS suivants :
+Pour chaque objet, le script extrait depuis le fichier FITS source :
 
-- `DATE-OBS`
-- `SITELAT`
-- `SITELONG`
+- DATE-OBS
+- SITELAT
+- SITELONG
 
-Données actuellement prises en charge :
-- température
-- humidité
-- pression atmosphérique
-- direction et vitesse du vent
+À partir de ces données, le module `space_weather.py` récupère automatiquement :
 
-Les données sont issues de services météo open source et mises en cache localement.
+- Température extérieure (°C)
+- Humidité relative (%)
+- Pression atmosphérique (hPa)
+- Vitesse et direction du vent
+- Date et heure UTC
+
+Source : **Open‑Meteo (archive API)**  
+Les résultats sont mis en cache localement.
 
 ---
 
-## Prérequis
+## 🗂️ Organisation du projet
+
+```
+MyWorks/
+├─ generate_gallery.py
+├─ space_weather.py
+├─ Objets Messiers..xlsx
+├─ objetsdivers.xlsx
+├─ MyWorks/
+└─ site/
+```
+
+---
+
+## ⚙️ Prérequis
 
 - Python 3.10+
-- Bibliothèques principales :
+- Windows 10/11
+- Bibliothèques :
   - astropy
-  - astroquery
-  - numpy
   - pandas
-  - matplotlib
-  - pillow
+  - numpy
   - requests
-  - openpyxl
+  - pillow
+
+Installation :
+```
+pip install astropy pandas numpy requests pillow
+```
 
 ---
 
-## Utilisation
+## ▶️ Exécution
 
-```bash
+```
 python generate_gallery.py
 ```
 
-Un seul script doit être lancé.  
-Les modules (ex. `space_weather.py`) sont appelés automatiquement.
+Un seul script est à lancer.
 
 ---
 
-## Licence
+## 📜 Licence
 
-- Code : GNU GPL v3
-- Images : Creative Commons CC0 1.0
+Images : **Creative Commons CC0 1.0**  
+Code : **GNU GPL v3**
 
 ---
 
-## Auteur
+## 👤 Auteur
 
 **Steve Prud’Homme**

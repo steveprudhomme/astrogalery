@@ -8,6 +8,18 @@ import time
 import shutil
 from datetime import datetime, date
 from pathlib import Path
+
+# --- Module météo (optionnel) / Weather module (optional) ---
+try:
+    import space_weather  # local module: space_weather.py
+    HAS_SPACE_WEATHER = True
+except Exception:
+    space_weather = None
+    HAS_SPACE_WEATHER = False
+
+# Compteurs de progression pour la génération météo (affichage console)
+WEATHER_TOTAL = 0
+WEATHER_DONE = 0
 import xml.etree.ElementTree as ET
 
 import requests
@@ -40,17 +52,6 @@ ATLAS_MAG_LIMIT = float(os.environ.get("GNU_ASTRO_GALERY_ATLAS_MAG_LIMIT", "10")
 
 from PIL import Image
 from openpyxl import load_workbook
-
-# ------------------------------------------------------------
-# Module optionnel: météo (Open-Meteo) à partir du header FITS
-# ------------------------------------------------------------
-try:
-    from space_weather import render_space_weather_block as _render_space_weather_block
-    HAS_SPACE_WEATHER = True
-except Exception:
-    _render_space_weather_block = None
-    HAS_SPACE_WEATHER = False
-
 
 
 # -------------------------
@@ -1590,6 +1591,49 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
     hero_img = hero["contentUrl"]
     hero_img_alt = hero.get("alt", obj_name)
 
+    # --- Météo et conditions d'observation / Weather & observing conditions ---
+    # On tente de retrouver le FITS source associé à l'image héros.
+    # If missing, we try to locate the FITS next to the JPG (same folder).
+    global WEATHER_DONE, WEATHER_TOTAL
+    space_weather_block = ""
+    if HAS_SPACE_WEATHER and space_weather is not None:
+        fp = hero.get("_fitsPath") or hero.get("fitsPath") or hero.get("fits_path") or ""
+        if (not fp) and hero.get("_jpgPath"):
+            try:
+                jpgp = Path(hero.get("_jpgPath"))
+                fp2 = find_stacked_fits_in_dir(jpgp.parent)
+                fp = str(fp2) if fp2 else ""
+            except Exception:
+                fp = ""
+
+        # Indicateur visuel / Progress indicator
+        try:
+            WEATHER_DONE += 1
+            if WEATHER_TOTAL > 0:
+                pct = (WEATHER_DONE / WEATHER_TOTAL) * 100.0
+                print(f"🌤️  Météo: {WEATHER_DONE}/{WEATHER_TOTAL} ({pct:5.1f}%) — {obj_name}")
+            else:
+                print(f"🌤️  Météo: {WEATHER_DONE} — {obj_name}")
+        except Exception:
+            pass
+
+        if fp and Path(fp).exists():
+            try:
+                space_weather_block = space_weather.render_space_weather_block(fp)
+            except Exception as e:
+                space_weather_block = (
+                    "<div class='card shadow-sm'><div class='card-body text-muted'>"
+                    f"Données météo non disponibles (erreur module): {html_escape(str(e))}"
+                    "</div></div>"
+                )
+        else:
+            space_weather_block = (
+                "<div class='card shadow-sm'><div class='card-body text-muted'>"
+                "Météo/conditions: FITS source introuvable pour cet objet "
+                "(DATE-OBS/SITELAT/SITELONG requis)."
+                "</div></div>"
+            )
+
     # --- Métadonnées de l'image ---
     image_meta_rows = [
         ("Nom de fichier", hero.get("name", "")),
@@ -1639,17 +1683,6 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
         f"<span class='badge text-bg-secondary me-1 mb-1'>{html_escape(t)}</span>"
         for t in tags
     ) or "<span class='text-muted'>Aucun tag</span>"
-
-    # --- Météo et conditions d’observation (module externe) ---
-    space_weather_block = ""
-    if HAS_SPACE_WEATHER and _render_space_weather_block:
-        fp = hero.get("_fitsPath") or hero.get("fitsPath") or hero.get("fits_path")
-        try:
-            if fp and Path(fp).exists():
-                space_weather_block = _render_space_weather_block(fp)
-        except Exception:
-            space_weather_block = "<p class='text-muted'>Données météo non disponibles.</p>"
-
 
     # --- Astrométrie (preview + modal) ---
     astro = hero.get("astrometryUrl", "")
@@ -1835,14 +1868,11 @@ def build_object_page_html(site_title: str, obj_name: str, jsonld_block: str, og
     </div>
   </div>
 
-  <!-- Space weather -->
-  <div class="mb-4">
-    {space_weather_block}
-  </div>
-
   <!-- Astrometry -->
   <div class="mb-4">
-    {astro_block}
+    {space_weather_block}
+
+{astro_block}
         {star_block}
   </div>
 
@@ -2393,16 +2423,17 @@ def main():
     else:
         print("[INFO] Astrométrie non exécutée (pas de session Nova).")
 
-    # Remove internal fields
+    # Préparer une version "publique" des items pour images.json (sans chemins locaux internes)
+    # Prepare a "public" version for images.json (strip internal local paths)
+    items_public = []
     for it in items:
-        it.pop("_fitsPath", None)
-        it.pop("_jpgPath", None)
-        it.pop("_jpgStem", None)
+        it_pub = {k: v for k, v in it.items() if not k.startswith("_")}
+        items_public.append(it_pub)
 
     print("🧩 Écriture des fichiers du site...")
 
     (out / "data/images.json").write_text(
-        json.dumps(items, ensure_ascii=False, indent=2),
+        json.dumps(items_public, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
 
@@ -2423,6 +2454,9 @@ def main():
 
     # Object pages
     object_urls = []
+    WEATHER_DONE = 0
+    WEATHER_TOTAL = len(object_groups)
+
     for obj_name, group_items in object_groups.items():
         group_items.sort(key=lambda x: x.get("dateCreatedISO", ""), reverse=True)
 
