@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import sys
+from pathlib import Path as _Path
+# Ensure local package imports work when running from any working directory (Windows/PowerShell).
+sys.path.insert(0, str(_Path(__file__).resolve().parent))
+
+# --- Console / redirection encoding (Windows) ---
+# When redirecting output (>> log.txt), Windows may use cp1252 and fail on emojis.
+# We force UTF-8 to keep the script stable. (No behavior change in generated site.)
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+# --- end encoding fix ---
+
+
 
 import os
 import re
@@ -8,6 +26,15 @@ import time
 import shutil
 from datetime import datetime, date
 from pathlib import Path
+try:
+    from astrogalery.fs_scan import is_in_sub_folder, is_thumbnail_file, find_final_jpgs
+except Exception as _e:
+    # Fallback: keep local implementations if the package folder is missing.
+    # This preserves behavior and avoids hard failure.
+    try:
+        print(f"[WARN] Import astrogalery.fs_scan impossible ({_e}). Utilisation des fonctions locales.")
+    except Exception:
+        pass
 
 # --- Module météo (optionnel) / Weather module (optional) ---
 try:
@@ -887,49 +914,6 @@ def read_image_from_jpg(jpg_path: Path) -> np.ndarray | None:
 
 # ------------------------------------------------------------
 # JPG discovery (exclude *_sub/*-sub and *_thn.jpg)
-# ------------------------------------------------------------
-def is_in_sub_folder(path: Path) -> bool:
-    for part in path.parts:
-        p = str(part).lower()
-        if p.endswith("_sub") or p.endswith("-sub"):
-            return True
-    return False
-
-
-def is_thumbnail_file(path: Path) -> bool:
-    return path.name.lower().endswith("_thn.jpg")
-
-
-def find_final_jpgs(root_dir: Path):
-    results = []
-    for dirpath, dirnames, filenames in os.walk(root_dir):
-        d = Path(dirpath)
-
-        if d.name in ("site", ".git", "__pycache__", ".venv", "venv", "cache"):
-            dirnames[:] = []
-            continue
-
-        if d.name.lower().endswith("_sub") or d.name.lower().endswith("-sub"):
-            dirnames[:] = []
-            continue
-
-        dirnames[:] = [x for x in dirnames if not (x.lower().endswith("_sub") or x.lower().endswith("-sub"))]
-
-        for fn in filenames:
-            if not fn.lower().endswith(".jpg"):
-                continue
-            p = d / fn
-            if is_in_sub_folder(p):
-                continue
-            if is_thumbnail_file(p):
-                continue
-            results.append(p)
-
-    return results
-
-
-# ------------------------------------------------------------
-# Nova helpers
 # ------------------------------------------------------------
 def _json_or_raise(r: requests.Response, context: str) -> dict:
     r.raise_for_status()
