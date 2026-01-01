@@ -36,6 +36,8 @@ except Exception as _e:
     except Exception:
         pass
 
+from astrogalery.fits_utils import extract_fits_metadata, find_stacked_fits_in_dir, read_best_image_from_fits, wcs_center_from_header, load_wcs_header_only, looks_like_fits_bytes
+
 # --- Module météo (optionnel) / Weather module (optional) ---
 try:
     import space_weather  # local module: space_weather.py
@@ -825,30 +827,8 @@ def enrich_tags(object_name_for_simbad: str, cache: dict) -> dict:
 # ------------------------------------------------------------
 # FITS / metadata
 # ------------------------------------------------------------
-def extract_fits_metadata(fits_path: Path) -> dict:
-    try:
-        with fits.open(fits_path, ignore_missing_simple=True) as hdul:
-            h = hdul[0].header
-            return {
-                "object": safe_text(h.get("OBJECT"), "Unknown Object"),
-                "date_obs": safe_text(h.get("DATE-OBS"), ""),
-                "exptime": h.get("EXPTIME", 0),
-                "filter": safe_text(h.get("FILTER"), "None"),
-                "telescope": safe_text(h.get("TELESCOP"), "Unknown Telescope"),
-                "instrument": safe_text(h.get("INSTRUME"), "Unknown Instrument"),
-                "observer": safe_text(h.get("OBSERVER"), "Unknown Observer"),
-                "ra": safe_text(h.get("RA"), ""),
-                "dec": safe_text(h.get("DEC"), ""),
-            }
-    except Exception as e:
-        print(f"[WARN] FITS illisible: {fits_path} ({e})")
-        return {}
 
 
-def find_stacked_fits_in_dir(obs_dir: Path) -> Path | None:
-    for p in obs_dir.rglob("Stacked*.fit*"):
-        return p
-    return None
 
 
 def estimate_scale_arcsec_per_pix(fits_path: Path):
@@ -887,20 +867,6 @@ def _to_2d_array(arr: np.ndarray) -> np.ndarray | None:
     return None
 
 
-def read_best_image_from_fits(fits_path: Path) -> np.ndarray | None:
-    try:
-        with fits.open(fits_path, ignore_missing_simple=True) as hdul:
-            for hdu in hdul:
-                data = getattr(hdu, "data", None)
-                if data is None:
-                    continue
-                img = _to_2d_array(data)
-                if img is not None and img.size > 0:
-                    return img
-    except Exception as e:
-        print(f"[WARN] Lecture FITS échouée {fits_path.name}: {e}")
-        return None
-    return None
 
 
 def read_image_from_jpg(jpg_path: Path) -> np.ndarray | None:
@@ -995,13 +961,6 @@ def nova_poll_job_solved(jobid: int, wait_s: int = 5, timeout_s: int = 900):
         time.sleep(wait_s)
 
 
-def looks_like_fits_bytes(b: bytes) -> bool:
-    head = b[:80]
-    try:
-        s = head.decode("ascii", errors="ignore")
-    except Exception:
-        return False
-    return "SIMPLE" in s
 
 
 def download_binary(url: str, timeout: int = 300) -> tuple[bytes, str]:
@@ -1023,18 +982,6 @@ def nova_download_wcs_header_only(jobid: int, out_fits_path: Path) -> bool:
     return True
 
 
-def load_wcs_header_only(wcs_fits_path: Path) -> fits.Header | None:
-    try:
-        with fits.open(wcs_fits_path, ignore_missing_simple=True) as hdul:
-            return hdul[0].header
-    except Exception as e:
-        print(f"[WARN] Lecture WCS header-only échouée {wcs_fits_path.name}: {e}")
-        return None
-
-
-# ------------------------------------------------------------
-# ASTROMETRY PNG (image + WCS header-only)
-# ------------------------------------------------------------
 def make_astrometry_png_from_image_and_wcs(
     image_array_2d: np.ndarray,
     wcs_header: fits.Header,
@@ -1090,15 +1037,6 @@ def load_star_cache() -> dict:
 def save_star_cache(cache: dict):
     save_json(STAR_CACHE_INDEX, cache)
 
-def wcs_center_from_header(h: fits.Header) -> tuple[float | None, float | None]:
-    try:
-        ra = h.get("CRVAL1", None)
-        dec = h.get("CRVAL2", None)
-        ra = float(ra) if ra is not None else None
-        dec = float(dec) if dec is not None else None
-        return ra, dec
-    except Exception:
-        return None, None
 
 def _ensure_constellation_index_json() -> bool:
     """
